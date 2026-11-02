@@ -1,0 +1,8 @@
+# 1. Extraia o ZIP baixado ou entre na pasta clonada
+cd Jarvis
+
+# 2. Adicione os arquivos ao Git
+git add .
+git commit -m "feat: Jarvis Assistant - Android Native Foundation (Fase 1)"
+git branch -M main
+git push -u origin main
