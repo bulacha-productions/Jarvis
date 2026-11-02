@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.rememberNavController
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.data.local.room.JarvisDatabase
 import com.jarvis.assistant.navigation.JarvisNavGraph
@@ -27,9 +28,10 @@ class MainActivity : ComponentActivity() {
         // Camada de infraestrutura local
         val database = JarvisDatabase.getInstance(applicationContext)
         val preferencesManager = UserPreferencesManager(applicationContext)
+        val secureKeyStore = SecureKeyStoreManager(applicationContext)
         val chatRepository = ChatRepository(database.conversationDao(), database.messageDao())
 
-        // Instanciação manual dos ViewModels (preparado para injeção via DI posterior)
+        // Instanciação manual dos ViewModels
         val chatViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
@@ -47,7 +49,7 @@ class MainActivity : ComponentActivity() {
         val settingsViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SettingsViewModel(preferencesManager) as T
+                return SettingsViewModel(preferencesManager, secureKeyStore) as T
             }
         })[SettingsViewModel::class.java]
 

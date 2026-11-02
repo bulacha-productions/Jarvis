@@ -34,23 +34,29 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-apk-debug
+        name: jarvis-v1.1.0-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v1.0.0-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v1.0.0
+        tag_name: v1.1.0-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v1.1.0
         body: |
-          ### 🤖 Jarvis Assistant - Instalação no Celular
-          O APK foi compilado com sucesso!
+          ### 🤖 Jarvis Assistant v1.1.0 - Instalação no Celular
           
-          **Para instalar no seu celular:**
-          1. Baixe o arquivo **app-debug.apk** abaixo diretamente no seu Android.
-          2. Abra o arquivo baixado para instalar.
-          3. Se o Android pedir, permita a instalação de fontes desconhecidas nas configurações.
+          **Novidades desta versão (V1.1):**
+          - ✅ Correção definitiva no sistema de conversas (mensagens salvas em Room sem exclusão em cascata)
+          - ✅ Correção do histórico: sem limites arbitrários de conversas e com rolagem completa
+          - ✅ Seção de Provedores de IA (Google Gemini, OpenAI, Claude) com teste de conexão
+          - ✅ Armazenamento seguro de chaves com Android Keystore / EncryptedSharedPreferences
+          - ✅ Questionário de atribuição de responsabilidades de modelos (LIGHT, MEDIUM, HIGH)
+          - ✅ Entrada de áudio via microfone (SpeechRecognizer)
+          - ✅ Seletor de anexos oficiais do Android com prévia
+          - ✅ Ícone oficial do Mascote 8-bit Voxel no launcher e aplicativos recentes
+          - ✅ Suporte aprimorado a teclado (imePadding) e Window Insets
+          - ✅ Versionamento atualizado: versionCode 2, versionName 1.1.0
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

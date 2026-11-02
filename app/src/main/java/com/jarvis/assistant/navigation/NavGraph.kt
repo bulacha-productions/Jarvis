@@ -1,6 +1,7 @@
 package com.jarvis.assistant.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -43,7 +44,11 @@ fun JarvisNavGraph(
             })
         ) { backStackEntry ->
             val convId = backStackEntry.arguments?.getString("conversationId")
-            chatViewModel.loadConversation(convId)
+
+            // CRITICAL FIX: Run only when convId actually changes, avoiding recreation loop on recomposition!
+            LaunchedEffect(convId) {
+                chatViewModel.loadConversation(convId)
+            }
 
             ChatScreen(
                 viewModel = chatViewModel,

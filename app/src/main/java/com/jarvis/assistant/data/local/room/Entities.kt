@@ -29,5 +29,9 @@ data class MessageEntity(
     val conversationId: String,
     val content: String,
     val isFromUser: Boolean,
-    val timestamp: Long
+    val timestamp: Long,
+    val attachmentName: String? = null,
+    val attachmentMimeType: String? = null,
+    val attachmentSize: Long? = null,
+    val attachmentUri: String? = null
 )
