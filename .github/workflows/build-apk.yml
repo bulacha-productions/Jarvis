@@ -1,0 +1,55 @@
+name: Build Jarvis APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Java JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Build Debug APK
+      run: gradle assembleDebug --stacktrace
+
+    - name: Upload Debug APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: jarvis-apk-debug
+        path: app/build/outputs/apk/debug/*.apk
+        retention-days: 30
+
+    - name: Create Release with Direct APK Download
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.0.0-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v1.0.0
+        body: |
+          ### 🤖 Jarvis Assistant - Instalação no Celular
+          O APK foi compilado com sucesso!
+          
+          **Para instalar no seu celular:**
+          1. Baixe o arquivo **app-debug.apk** abaixo diretamente no seu Android.
+          2. Abra o arquivo baixado para instalar.
+          3. Se o Android pedir, permita a instalação de fontes desconhecidas nas configurações.
+        files: app/build/outputs/apk/debug/app-debug.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
