@@ -18,10 +18,15 @@ class UserPreferencesManager(private val context: Context) {
 
     private val KEY_DARK_THEME = booleanPreferencesKey("pref_dark_theme")
     private val KEY_AI_LEVEL = stringPreferencesKey("pref_ai_level")
-    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v1_1")
+    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v2")
+    private val KEY_MULTI_AGENT_ENABLED = booleanPreferencesKey("pref_multi_agent_enabled_v2")
 
     val isDarkTheme: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_DARK_THEME] ?: true
+    }
+
+    val isMultiAgentEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_MULTI_AGENT_ENABLED] ?: true
     }
 
     val aiLevel: Flow<AILevel> = context.dataStore.data.map { preferences ->
@@ -45,6 +50,12 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun setDarkTheme(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_DARK_THEME] = enabled
+        }
+    }
+
+    suspend fun setMultiAgentEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_MULTI_AGENT_ENABLED] = enabled
         }
     }
 
@@ -80,7 +91,15 @@ class UserPreferencesManager(private val context: Context) {
                 val taskId = obj.getString("taskId")
                 val task = ModelTask.values().find { it.id == taskId } ?: ModelTask.GENERAL_CHAT
                 val providerId = obj.getString("providerId")
-                val modelName = obj.getString("modelName")
+                var modelName = obj.getString("modelName")
+
+                // Auto-migração transparente de identificadores 404 antigos
+                if (modelName == "gemini-2.5-flash") {
+                    modelName = "gemini-2.0-flash"
+                } else if (modelName == "gemini-2.5-pro") {
+                    modelName = "gemini-1.5-pro"
+                }
+
                 val level = try { AILevel.valueOf(obj.getString("level")) } catch (_: Exception) { AILevel.MEDIUM }
                 val reason = obj.optString("reason", "")
                 map[taskId] = TaskAssignment(task, providerId, modelName, level, reason)
@@ -93,14 +112,38 @@ class UserPreferencesManager(private val context: Context) {
 
     private fun getDefaultAssignments(): Map<String, TaskAssignment> {
         val map = mutableMapOf<String, TaskAssignment>()
-        map[ModelTask.GENERAL_CHAT.id] = TaskAssignment(ModelTask.GENERAL_CHAT, "gemini", "gemini-2.5-flash", AILevel.MEDIUM, "Padrão recomendado para conversas diárias.")
-        map[ModelTask.QUICK_QUESTIONS.id] = TaskAssignment(ModelTask.QUICK_QUESTIONS, "gemini", "gemini-1.5-flash", AILevel.LIGHT, "Baixa latência para perguntas diretas.")
-        map[ModelTask.CODING.id] = TaskAssignment(ModelTask.CODING, "claude", "claude-3-5-sonnet", AILevel.HIGH, "Alta precisão em engenharia de software e depuração.")
-        map[ModelTask.COMPLEX_REASONING.id] = TaskAssignment(ModelTask.COMPLEX_REASONING, "openai", "o3-mini", AILevel.HIGH, "Raciocínio dedutivo e matemático avançado.")
-        map[ModelTask.RESEARCH.id] = TaskAssignment(ModelTask.RESEARCH, "gemini", "gemini-2.5-flash", AILevel.MEDIUM, "Contexto longo para síntese de informações.")
-        map[ModelTask.CREATIVE_WRITING.id] = TaskAssignment(ModelTask.CREATIVE_WRITING, "claude", "claude-3-5-sonnet", AILevel.MEDIUM, "Estilo narrativo refinado.")
-        map[ModelTask.IMAGE_ANALYSIS.id] = TaskAssignment(ModelTask.IMAGE_ANALYSIS, "gemini", "gemini-2.5-flash", AILevel.HIGH, "Visão computacional e OCR nativo.")
-        map[ModelTask.DOCUMENT_ANALYSIS.id] = TaskAssignment(ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-2.5-pro", AILevel.HIGH, "Leitura estruturada de PDFs e relatórios.")
+        map[ModelTask.GENERAL_CHAT.id] = TaskAssignment(
+            ModelTask.GENERAL_CHAT, "gemini", "gemini-2.0-flash", AILevel.MEDIUM,
+            "Padrão do Jarvis Central com alta velocidade e naturalidade."
+        )
+        map[ModelTask.QUICK_QUESTIONS.id] = TaskAssignment(
+            ModelTask.QUICK_QUESTIONS, "gemini", "gemini-1.5-flash", AILevel.LIGHT,
+            "Baixa latência para perguntas diretas e comandos instantâneos."
+        )
+        map[ModelTask.CODING.id] = TaskAssignment(
+            ModelTask.CODING, "claude", "claude-3-5-sonnet", AILevel.HIGH,
+            "Agente de Programação: alta precisão técnica e depuração robusta."
+        )
+        map[ModelTask.COMPLEX_REASONING.id] = TaskAssignment(
+            ModelTask.COMPLEX_REASONING, "openai", "o3-mini", AILevel.HIGH,
+            "Agente Analítico: encadeamento dedutivo, lógica e matemática avançada."
+        )
+        map[ModelTask.RESEARCH.id] = TaskAssignment(
+            ModelTask.RESEARCH, "gemini", "gemini-2.0-flash", AILevel.MEDIUM,
+            "Agente de Pesquisa: síntese ampla e investigação comparativa."
+        )
+        map[ModelTask.CREATIVE_WRITING.id] = TaskAssignment(
+            ModelTask.CREATIVE_WRITING, "claude", "claude-3-5-sonnet", AILevel.MEDIUM,
+            "Agente Criativo: estilo narrativo refinado e ideação expressiva."
+        )
+        map[ModelTask.IMAGE_ANALYSIS.id] = TaskAssignment(
+            ModelTask.IMAGE_ANALYSIS, "gemini", "gemini-2.0-flash", AILevel.HIGH,
+            "Visão computacional e OCR nativo com alta sensibilidade visual."
+        )
+        map[ModelTask.DOCUMENT_ANALYSIS.id] = TaskAssignment(
+            ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-1.5-pro", AILevel.HIGH,
+            "Janela de contexto longa para análise aprofundada de PDFs e relatórios."
+        )
         return map
     }
 }

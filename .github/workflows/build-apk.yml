@@ -34,26 +34,26 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v1.1.1-apk
+        name: jarvis-v2.0.0-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v1.1.1-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v1.1.1
+        tag_name: v2.0.0-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v2.0.0
         body: |
-          ### 🤖 Jarvis Assistant v1.1.1 — Fundação Inteligente & Multi-IA
-          
-          **Novidades desta versão (V1.1.1):**
-          - 🎙️ **Correção do Sistema de Áudio:** Reconhecimento de voz repetível e contínuo via `VoiceRecognitionManager`, sem travamentos após a primeira sessão.
-          - 🔑 **Gestão Completa de Provedores:** Suporte a Google Gemini, OpenAI e Claude com teste real de conexão e tratamento honesto de erros (401, 403, 429).
-          - 🧠 **Questionário Inteligente de Modelos (5 Etapas):** Distribuição automática por responsabilidades (Geral, Perguntas Rápidas, Código, Raciocínio, Pesquisa, Escrita, Visão, Documentos) com tela de confirmação e substituição manual.
-          - ⚡ **Roteamento Inteligente:** Direcionamento dinâmico sem necessidade de menções manuais ou comandos `@`.
-          - ➕ **Novo Menu (+) no Campo de Mensagem:** Câmera, Fotos (somente imagens), Arquivos (PDF, TXT, DOCX) e seleção de Capacidade por mensagem (LIGHT, MEDIUM, HIGH).
-          - 💬 **Integração Real com Chat:** Respostas reais dos provedores com persistência atômica no Room Database e preservação de contexto.
-          - 📱 **Versionamento:** `versionName = "1.1.1"`, `versionCode = 3`, mantendo o mesmo `applicationId = "com.jarvis.assistant"`.
+          ### 🤖 Jarvis Assistant v2.0.0 — Evolução Multiagente & Correção Crítica do Gemini
+
+          **Novidades desta versão (V2.0.0):**
+          - 🛠️ **Correção Definitiva do Google Gemini (HTTP 404):** Consulta em tempo real via `models.list` filtrando por suporte a `generateContent`, normalização de nomes sem prefixos inválidos e fallback resiliente automático.
+          - 🧠 **Sistema Multiagente Completo:** Coordenação central do Jarvis com 4 agentes especializados (Programação, Pesquisa, Criativo, Analítico) acionados de acordo com a complexidade da solicitação.
+          - 🔄 **Colaboração Interagente & Proteção Anti-Loop:** Compartilhamento seguro de contexto intermediário entre especialistas com limite estrito de até 3 passos para evitar loops.
+          - 🏷️ **Badges de Agentes Colaboradores:** Visualização clara no chat de quais agentes trabalharam na síntese da resposta.
+          - ⚙️ **Painel Multiagente em Configurações:** Controle de ativação e visualização das especialidades dos agentes.
+          - 🎯 **Questionário Inteligente Calibrado:** Mapeamento de 8 responsabilidades com modelos reais e existentes.
+          - 📱 **Versionamento:** `versionName = "2.0.0"`, `versionCode = 4`, mantendo o pacote `com.jarvis.assistant`.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

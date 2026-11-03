@@ -26,7 +26,7 @@ data class ChatUiState(
     val perMessageCapacity: AILevel? = null,
     val isPlusMenuOpen: Boolean = false,
     val isCapacitySubmenuOpen: Boolean = false,
-    val activeProviderName: String = "Jarvis Neural Core"
+    val activeProviderName: String = "Jarvis Neural Core V2"
 )
 
 class ChatViewModel(
@@ -46,7 +46,6 @@ class ChatViewModel(
         if (conversationId != null && conversationId == current && messagesJob?.isActive == true) {
             return
         }
-
         if (conversationId == null) {
             if (current == null) {
                 startNewChat()
@@ -140,7 +139,6 @@ class ChatViewModel(
 
         streamingJob?.cancel()
         streamingJob = viewModelScope.launch {
-            // Reset per-message capacity after capturing it (Rule: only applies to this single message!)
             _uiState.value = _uiState.value.copy(
                 inputText = "",
                 attachedFile = null,
@@ -150,12 +148,12 @@ class ChatViewModel(
                 isSending = true
             )
 
-            // Save user message immediately in Room
+            // Salva mensagem do usuário imediatamente no Room
             repository.saveUserMessage(convId, displayContent, attachment)
 
             val taskAssignments = preferencesManager.taskAssignments.firstOrNull() ?: emptyMap()
+            val isMultiAgent = preferencesManager.isMultiAgentEnabled.firstOrNull() ?: true
             val history = _uiState.value.messages
-
             val responseBuilder = StringBuilder()
 
             try {
@@ -164,7 +162,8 @@ class ChatViewModel(
                     history = history,
                     attachment = attachment,
                     overrideLevel = overrideCapacity,
-                    taskAssignments = taskAssignments
+                    taskAssignments = taskAssignments,
+                    isMultiAgentEnabled = isMultiAgent
                 ).collect { chunk ->
                     responseBuilder.append(chunk)
                 }

@@ -1,29 +1,81 @@
 package com.jarvis.assistant.ui.settings
 
-import androidx.compose.ui.draw.scale
-
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jarvis.assistant.ai.AIProviderConfig
+import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.ModelCapability
@@ -39,6 +91,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+    val isMultiAgentEnabled by viewModel.isMultiAgentEnabled.collectAsState()
     val aiLevel by viewModel.aiLevel.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
 
@@ -56,7 +109,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "v1.1.1",
+                                text = "v2.0.0",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = ElectricOrange,
@@ -84,11 +137,67 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
             contentPadding = PaddingValues(vertical = 16.dp)
         ) {
-            // SEÇÃO 1: PROVEDORES DE IA (Item 2)
+            // SEÇÃO 1: SISTEMA MULTIAGENTE V2
+            item {
+                SectionHeader(title = "SISTEMA MULTIAGENTE (V2.0.0)", icon = Icons.Default.Psychology)
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Coordenação Inteligente Multiagente",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = if (isMultiAgentEnabled) "Ativo: Tarefas complexas são decompostas entre agentes especializados" else "Desativado: Execução padrão direta",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isMultiAgentEnabled) ElectricOrange else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isMultiAgentEnabled,
+                                onCheckedChange = { viewModel.toggleMultiAgent(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.Black,
+                                    checkedTrackColor = ElectricOrange
+                                )
+                            )
+                        }
+
+                        // Agentes da Equipe Jarvis
+                        Text(
+                            text = "Agentes Especializados Disponíveis:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        AgentPillRow("⚡ Jarvis Central", "Orquestração & Síntese Final", ElectricOrange)
+                        AgentPillRow("💻 Programador", "Engenharia de Software, Código & Debug", Color(0xFF4FC3F7))
+                        AgentPillRow("🔍 Pesquisador", "Investigação Factual & Síntese Analítica", Color(0xFF81C784))
+                        AgentPillRow("✨ Criativo", "Narrativas, Ideação & Redação Expressiva", Color(0xFFBA68C8))
+                        AgentPillRow("📊 Analítico", "Raciocínio Matemático, Lógica & Validação", Color(0xFFFFB74D))
+                    }
+                }
+            }
+
+            // SEÇÃO 2: PROVEDORES DE IA & APIS
             item {
                 SectionHeader(title = "PROVEDORES DE IA & APIS", icon = Icons.Default.Key)
             }
-
             item {
                 Text(
                     text = "As credenciais são protegidas com criptografia de hardware via Android Keystore (AES256).",
@@ -96,7 +205,6 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     settingsState.providers.forEach { provider ->
@@ -150,11 +258,10 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 2: QUESTIONÁRIO DE MODELOS (Item 3)
+            // SEÇÃO 3: QUESTIONÁRIO DE MODELOS
             item {
-                SectionHeader(title = "DISTRIBUIÇÃO INTELIGENTE DE MODELOS", icon = Icons.Default.Psychology)
+                SectionHeader(title = "DISTRIBUIÇÃO INTELIGENTE DE MODELOS", icon = Icons.Default.Tune)
             }
-
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -175,7 +282,6 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-
                         Button(
                             onClick = { viewModel.setWizardOpen(true) },
                             colors = ButtonDefaults.buttonColors(containerColor = ElectricOrange, contentColor = Color.Black),
@@ -190,11 +296,10 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 3: NÍVEL PADRÃO DE INTELIGÊNCIA
+            // SEÇÃO 4: NÍVEL GLOBAL PADRÃO
             item {
                 SectionHeader(title = "NÍVEL GLOBAL PADRÃO", icon = Icons.Default.Speed)
             }
-
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     AILevel.values().forEach { level ->
@@ -243,11 +348,10 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 4: APARÊNCIA
+            // SEÇÃO 5: APARÊNCIA
             item {
                 SectionHeader(title = "APARÊNCIA", icon = Icons.Default.Palette)
             }
-
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -281,11 +385,10 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 5: SOBRE
+            // SEÇÃO 6: SOBRE
             item {
                 SectionHeader(title = "SOBRE O JARVIS", icon = Icons.Default.Info)
             }
-
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -304,13 +407,13 @@ fun SettingsScreen(
                             Column {
                                 Text(text = "Jarvis Assistant", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = "Versão 1.1.1 (Build Code: 3)",
+                                    text = "Versão 2.0.0 (Build Code: 4)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ElectricOrange,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Nativo Kotlin • Jetpack Compose • Room 2.6.1",
+                                    text = "Nativo Kotlin • Jetpack Compose • Multiagente • Room 2.6.1",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -322,27 +425,58 @@ fun SettingsScreen(
         }
     }
 
-    // Modal de Questionário Completo (Item 3)
     if (settingsState.isWizardOpen) {
         ModelConfigWizardDialog(
             providers = settingsState.providers,
             currentAssignments = settingsState.taskAssignments,
             onSaveAssignments = { newAssignments ->
                 viewModel.saveTaskAssignments(newAssignments)
+                viewModel.setWizardOpen(false)
             },
             onDismiss = { viewModel.setWizardOpen(false) }
         )
     }
 
-    // Dialog para adicionar modelo manual (Item 2)
-    providerToAddModel?.let { p ->
+    providerToAddModel?.let { provider ->
         AddCustomModelDialog(
-            provider = p,
+            provider = provider,
             onDismiss = { providerToAddModel = null },
-            onAdd = { modelId, name, level, capabilities ->
-                viewModel.addCustomModel(p.id, modelId, name, level, capabilities)
+            onAdd = { id, name, lvl, caps ->
+                viewModel.addCustomModel(provider.id, id, name, lvl, caps)
                 providerToAddModel = null
             }
+        )
+    }
+}
+
+@Composable
+private fun AgentPillRow(title: String, desc: String, badgeColor: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Surface(
+            color = badgeColor.copy(alpha = 0.2f),
+            shape = RoundedCornerShape(6.dp)
+        ) {
+            Text(
+                text = title,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = badgeColor,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            text = desc,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
         )
     }
 }
@@ -356,7 +490,7 @@ private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vect
         Icon(icon, contentDescription = null, tint = ElectricOrange, modifier = Modifier.size(18.dp))
         Text(
             text = title,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = ElectricOrange
         )
@@ -379,15 +513,15 @@ private fun ProviderCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-        shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (provider.apiKey.isNotBlank()) ElectricOrange.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outlineVariant
-        )
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        shape = RoundedCornerShape(16.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Header: Name & Enable Switch
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -399,17 +533,17 @@ private fun ProviderCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(10.dp)
                             .clip(CircleShape)
-                            .background(ElectricOrange.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = provider.displayName.first().toString(),
-                            fontWeight = FontWeight.Bold,
-                            color = ElectricOrange
-                        )
-                    }
+                            .background(
+                                when (provider.status) {
+                                    ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
+                                    ProviderStatus.TESTING -> Color(0xFFFFB300)
+                                    ProviderStatus.ERROR -> Color(0xFFE53935)
+                                    ProviderStatus.UNCONFIGURED -> Color.Gray
+                                }
+                            )
+                    )
                     Column {
                         Text(text = provider.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                         Text(
@@ -419,7 +553,6 @@ private fun ProviderCard(
                         )
                     }
                 }
-
                 Switch(
                     checked = provider.isEnabled,
                     onCheckedChange = onToggleEnabled,
@@ -430,7 +563,6 @@ private fun ProviderCard(
                 )
             }
 
-            // API Key field with mask toggle
             OutlinedTextField(
                 value = provider.apiKey,
                 onValueChange = onKeyChanged,
@@ -457,7 +589,6 @@ private fun ProviderCard(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Actions: Testar Conexão + Ver Modelos
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -481,7 +612,6 @@ private fun ProviderCard(
                 }
             }
 
-            // Models list & manual addition (Item 2)
             AnimatedVisibility(visible = expandedModels) {
                 Column(
                     modifier = Modifier
@@ -508,7 +638,6 @@ private fun ProviderCard(
                                     maxLines = 1
                                 )
                             }
-
                             Switch(
                                 checked = model.isEnabled,
                                 onCheckedChange = { isChecked -> onToggleModel(model.id, isChecked) },
@@ -531,8 +660,6 @@ private fun ProviderCard(
     }
 }
 
-
-
 @Composable
 private fun AddCustomModelDialog(
     provider: AIProviderConfig,
@@ -551,7 +678,7 @@ private fun AddCustomModelDialog(
                 OutlinedTextField(
                     value = modelId,
                     onValueChange = { modelId = it },
-                    label = { Text("ID do Modelo (ex: gpt-4.5-preview)") },
+                    label = { Text("ID do Modelo (ex: gemini-2.0-flash)") },
                     singleLine = true
                 )
                 OutlinedTextField(

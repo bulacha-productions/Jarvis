@@ -634,6 +634,14 @@ fun MessageBubble(message: Message) {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
+        // Agent Badges (V2.0.0 Multiagente)
+        val agentBadges = remember(message.content) {
+            if (!isUser) AgentBadgeHelper.extractBadges(message.content) else emptyList()
+        }
+        if (agentBadges.isNotEmpty()) {
+            AgentBadgesRow(badges = agentBadges)
+        }
+
         // Attachment inside bubble
         message.attachment?.let { att ->
             Surface(

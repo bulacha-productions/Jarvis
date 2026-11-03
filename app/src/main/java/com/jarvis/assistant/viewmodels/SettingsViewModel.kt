@@ -47,6 +47,12 @@ class SettingsViewModel(
         initialValue = true
     )
 
+    val isMultiAgentEnabled = preferencesManager.isMultiAgentEnabled.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = true
+    )
+
     val aiLevel = preferencesManager.aiLevel.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -64,23 +70,18 @@ class SettingsViewModel(
 
     init {
         loadProviders()
-        viewModelScope.launch {
-            preferencesManager.taskAssignments.collect { map ->
-                _settingsState.value = _settingsState.value.copy(taskAssignments = map)
-            }
-        }
     }
 
-    private fun loadProviders() {
-        val geminiKey = secureKeyStore.getApiKey("gemini")
-        val openaiKey = secureKeyStore.getApiKey("openai")
-        val claudeKey = secureKeyStore.getApiKey("claude")
-
-        val geminiProvider = GeminiProvider(context) { geminiKey }
-        val openaiProvider = OpenAIProvider(context, { openaiKey })
-        val claudeProvider = ClaudeProvider { claudeKey }
-
+    fun loadProviders() {
         viewModelScope.launch {
+            val geminiKey = secureKeyStore.getApiKey("gemini")
+            val openaiKey = secureKeyStore.getApiKey("openai")
+            val claudeKey = secureKeyStore.getApiKey("claude")
+
+            val geminiProvider = GeminiProvider(context) { geminiKey }
+            val openaiProvider = OpenAIProvider(context, { openaiKey }, { "" })
+            val claudeProvider = ClaudeProvider { claudeKey }
+
             val geminiModels = geminiProvider.getAvailableModels(AILevel.MEDIUM) +
                     geminiProvider.getAvailableModels(AILevel.LIGHT) +
                     geminiProvider.getAvailableModels(AILevel.HIGH)
@@ -101,7 +102,7 @@ class SettingsViewModel(
                     apiKey = geminiKey,
                     isEnabled = true,
                     availableModels = geminiModels.distinctBy { it.id },
-                    selectedModel = "gemini-2.5-flash",
+                    selectedModel = "gemini-2.0-flash",
                     status = if (geminiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
@@ -186,7 +187,6 @@ class SettingsViewModel(
             }
 
             val testResult: ConnectionTestResult = providerInstance.testConnection(providerConfig.apiKey, providerConfig.baseUrl)
-
             if (testResult.isSuccess) {
                 val updatedModels = if (testResult.discoveredModels.isNotEmpty()) {
                     testResult.discoveredModels
@@ -203,7 +203,6 @@ class SettingsViewModel(
                         )
                     } else it
                 }
-
                 _settingsState.value = _settingsState.value.copy(
                     providers = updatedProviders,
                     isTestingConnection = false,
@@ -219,7 +218,6 @@ class SettingsViewModel(
                         )
                     } else it
                 }
-
                 _settingsState.value = _settingsState.value.copy(
                     providers = updatedProviders,
                     isTestingConnection = false,
@@ -281,6 +279,12 @@ class SettingsViewModel(
     fun toggleTheme(enabled: Boolean) {
         viewModelScope.launch {
             preferencesManager.setDarkTheme(enabled)
+        }
+    }
+
+    fun toggleMultiAgent(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setMultiAgentEnabled(enabled)
         }
     }
 
