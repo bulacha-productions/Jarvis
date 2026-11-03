@@ -228,7 +228,7 @@ class OpenAIProvider(
             }
 
             // Current message content
-            val userContent = if (attachment != null && context != null && attachment.uriString.isNotBlank() && attachment.mimeType.startsWith("image/")) {
+            val userContent = if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true && attachment.mimeType?.startsWith("image/") == true) {
                 try {
                     val uri = Uri.parse(attachment.uriString)
                     val base64 = context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->

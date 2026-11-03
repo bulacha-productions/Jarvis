@@ -1,5 +1,7 @@
 package com.jarvis.assistant.ui.settings
 
+import androidx.compose.ui.draw.scale
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -529,9 +531,7 @@ private fun ProviderCard(
     }
 }
 
-private fun Modifier.scale(scale: Float): Modifier = this.then(
-    Modifier.padding((1f - scale) * 4.dp)
-)
+
 
 @Composable
 private fun AddCustomModelDialog(

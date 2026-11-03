@@ -76,7 +76,6 @@ class GeminiProvider(
             defaultLevel = AILevel.LIGHT,
             capabilities = setOf(
                 ModelCapability.TEXT,
-                ModelCapability.QUICK_QUESTIONS.requiredCapability,
                 ModelCapability.IMAGE_ANALYSIS
             ),
             description = "Baixíssima latência para consultas rápidas e comandos instantâneos."
@@ -227,13 +226,13 @@ class GeminiProvider(
             currentParts.put(JSONObject().put("text", prompt))
 
             // Inline attachment if image
-            if (attachment != null && context != null && attachment.uriString.isNotBlank()) {
+            if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
                 try {
                     val uri = Uri.parse(attachment.uriString)
                     context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
                         val bytes = stream.readBytes()
                         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                        val mime = attachment.mimeType.ifBlank { "image/jpeg" }
+                        val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
                         currentParts.put(JSONObject().apply {
                             put("inlineData", JSONObject().apply {
                                 put("mimeType", mime)
