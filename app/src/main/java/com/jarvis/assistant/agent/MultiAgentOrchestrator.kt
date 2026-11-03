@@ -343,7 +343,7 @@ class MultiAgentOrchestrator(
         }
     }
 
-    private fun resolveProviderAndModel(
+    private suspend fun resolveProviderAndModel(
         task: ModelTask,
         level: AILevel,
         taskAssignments: Map<String, TaskAssignment>
