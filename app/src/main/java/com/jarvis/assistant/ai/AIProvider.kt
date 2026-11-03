@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ai
 
 import com.jarvis.assistant.domain.model.AILevel
+import com.jarvis.assistant.domain.model.AIModelInfo
+import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Message
 import kotlinx.coroutines.flow.Flow
 
@@ -19,6 +21,13 @@ enum class ProviderStatus {
     ERROR
 }
 
+data class ConnectionTestResult(
+    val isSuccess: Boolean,
+    val statusCode: Int? = null,
+    val message: String,
+    val discoveredModels: List<AIModelInfo> = emptyList()
+)
+
 data class AIProviderConfig(
     val id: String,
     val type: ProviderType,
@@ -26,7 +35,7 @@ data class AIProviderConfig(
     val apiKey: String = "",
     val baseUrl: String = "",
     val isEnabled: Boolean = true,
-    val availableModels: List<String> = emptyList(),
+    val availableModels: List<AIModelInfo> = emptyList(),
     val selectedModel: String = "",
     val status: ProviderStatus = ProviderStatus.UNCONFIGURED,
     val lastError: String? = null
@@ -38,13 +47,15 @@ interface AIProvider {
     val displayName: String
 
     suspend fun isAvailable(): Boolean
-    suspend fun testConnection(apiKey: String, baseUrl: String = ""): Result<List<String>>
-    suspend fun getAvailableModels(level: AILevel): List<String>
-    
+    suspend fun testConnection(apiKey: String, baseUrl: String = ""): ConnectionTestResult
+    suspend fun queryRemoteModels(apiKey: String, baseUrl: String = ""): Result<List<AIModelInfo>>
+    suspend fun getAvailableModels(level: AILevel): List<AIModelInfo>
+
     fun generateStreamResponse(
         prompt: String,
         history: List<Message>,
         level: AILevel,
-        modelName: String = ""
+        modelName: String = "",
+        attachment: Attachment? = null
     ): Flow<String>
 }

@@ -34,29 +34,26 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v1.1.0-apk
+        name: jarvis-v1.1.1-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v1.1.0-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v1.1.0
+        tag_name: v1.1.1-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v1.1.1
         body: |
-          ### 🤖 Jarvis Assistant v1.1.0 - Instalação no Celular
+          ### 🤖 Jarvis Assistant v1.1.1 — Fundação Inteligente & Multi-IA
           
-          **Novidades desta versão (V1.1):**
-          - ✅ Correção definitiva no sistema de conversas (mensagens salvas em Room sem exclusão em cascata)
-          - ✅ Correção do histórico: sem limites arbitrários de conversas e com rolagem completa
-          - ✅ Seção de Provedores de IA (Google Gemini, OpenAI, Claude) com teste de conexão
-          - ✅ Armazenamento seguro de chaves com Android Keystore / EncryptedSharedPreferences
-          - ✅ Questionário de atribuição de responsabilidades de modelos (LIGHT, MEDIUM, HIGH)
-          - ✅ Entrada de áudio via microfone (SpeechRecognizer)
-          - ✅ Seletor de anexos oficiais do Android com prévia
-          - ✅ Ícone oficial do Mascote 8-bit Voxel no launcher e aplicativos recentes
-          - ✅ Suporte aprimorado a teclado (imePadding) e Window Insets
-          - ✅ Versionamento atualizado: versionCode 2, versionName 1.1.0
+          **Novidades desta versão (V1.1.1):**
+          - 🎙️ **Correção do Sistema de Áudio:** Reconhecimento de voz repetível e contínuo via `VoiceRecognitionManager`, sem travamentos após a primeira sessão.
+          - 🔑 **Gestão Completa de Provedores:** Suporte a Google Gemini, OpenAI e Claude com teste real de conexão e tratamento honesto de erros (401, 403, 429).
+          - 🧠 **Questionário Inteligente de Modelos (5 Etapas):** Distribuição automática por responsabilidades (Geral, Perguntas Rápidas, Código, Raciocínio, Pesquisa, Escrita, Visão, Documentos) com tela de confirmação e substituição manual.
+          - ⚡ **Roteamento Inteligente:** Direcionamento dinâmico sem necessidade de menções manuais ou comandos `@`.
+          - ➕ **Novo Menu (+) no Campo de Mensagem:** Câmera, Fotos (somente imagens), Arquivos (PDF, TXT, DOCX) e seleção de Capacidade por mensagem (LIGHT, MEDIUM, HIGH).
+          - 💬 **Integração Real com Chat:** Respostas reais dos provedores com persistência atômica no Room Database e preservação de contexto.
+          - 📱 **Versionamento:** `versionName = "1.1.1"`, `versionCode = 3`, mantendo o mesmo `applicationId = "com.jarvis.assistant"`.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
