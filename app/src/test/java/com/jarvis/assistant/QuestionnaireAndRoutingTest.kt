@@ -1,20 +1,45 @@
 package com.jarvis.assistant
 
-import com.jarvis.assistant.ai.AIProviderConfig
-import com.jarvis.assistant.ai.ProviderStatus
+import com.jarvis.assistant.ai.AIProvider
+import com.jarvis.assistant.ai.ConnectionTestResult
 import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
+import com.jarvis.assistant.domain.model.Attachment
+import com.jarvis.assistant.domain.model.Message
 import com.jarvis.assistant.domain.model.ModelCapability
 import com.jarvis.assistant.router.QuestionnaireEngine
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+class TestAIProvider(
+    override val id: String,
+    override val type: ProviderType,
+    override val displayName: String,
+    private val models: List<AIModelInfo>
+) : AIProvider {
+    override suspend fun isAvailable(): Boolean = true
+    override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult =
+        ConnectionTestResult(true, 200, "OK")
+    override suspend fun queryRemoteModels(apiKey: String, baseUrl: String): Result<List<AIModelInfo>> =
+        Result.success(models)
+    override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> = models
+    override fun generateStreamResponse(
+        prompt: String,
+        history: List<Message>,
+        level: AILevel,
+        modelName: String,
+        attachment: Attachment?
+    ): Flow<String> = emptyFlow()
+}
+
 class QuestionnaireAndRoutingTest {
 
-    private fun createSampleProviders(): List<AIProviderConfig> {
+    private fun createSampleProviders(): List<AIProvider> {
         val geminiModel = AIModelInfo(
             id = "gemini-2.0-flash",
             displayName = "Gemini 2.0 Flash",
@@ -38,33 +63,9 @@ class QuestionnaireAndRoutingTest {
         )
 
         return listOf(
-            AIProviderConfig(
-                id = "gemini",
-                type = ProviderType.GEMINI,
-                displayName = "Google Gemini",
-                apiKey = "test-key-gemini",
-                isEnabled = true,
-                availableModels = listOf(geminiModel),
-                status = ProviderStatus.CONNECTED
-            ),
-            AIProviderConfig(
-                id = "openai",
-                type = ProviderType.OPENAI,
-                displayName = "OpenAI",
-                apiKey = "test-key-openai",
-                isEnabled = true,
-                availableModels = listOf(openaiModel),
-                status = ProviderStatus.CONNECTED
-            ),
-            AIProviderConfig(
-                id = "claude",
-                type = ProviderType.CLAUDE,
-                displayName = "Anthropic Claude",
-                apiKey = "test-key-claude",
-                isEnabled = true,
-                availableModels = listOf(claudeModel),
-                status = ProviderStatus.CONNECTED
-            )
+            TestAIProvider("gemini", ProviderType.GEMINI, "Google Gemini", listOf(geminiModel)),
+            TestAIProvider("openai", ProviderType.OPENAI, "OpenAI", listOf(openaiModel)),
+            TestAIProvider("claude", ProviderType.CLAUDE, "Anthropic Claude", listOf(claudeModel))
         )
     }
 
@@ -75,7 +76,7 @@ class QuestionnaireAndRoutingTest {
 
         val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
 
-        assignments.forEach { (_, assignment) ->
+        assignments.forEach { assignment ->
             assertEquals("openai", assignment.providerId)
             assertFalse(assignment.providerId == "gemini")
             assertFalse(assignment.providerId == "claude")
@@ -89,7 +90,7 @@ class QuestionnaireAndRoutingTest {
 
         val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
 
-        assignments.forEach { (_, assignment) ->
+        assignments.forEach { assignment ->
             assertTrue(assignment.providerId == "openai" || assignment.providerId == "claude")
             assertFalse(assignment.providerId == "gemini")
             assertFalse(assignment.modelName.contains("1.5"))
