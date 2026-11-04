@@ -6,7 +6,6 @@ import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.ModelCapability
-import com.jarvis.assistant.domain.model.ModelTask
 import com.jarvis.assistant.router.QuestionnaireEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,21 +20,21 @@ class QuestionnaireAndRoutingTest {
             displayName = "Gemini 2.0 Flash",
             providerId = "gemini",
             defaultLevel = AILevel.MEDIUM,
-            capabilities = setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.CODING)
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING)
         )
         val openaiModel = AIModelInfo(
             id = "gpt-4o",
             displayName = "GPT-4o",
             providerId = "openai",
             defaultLevel = AILevel.HIGH,
-            capabilities = setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.CODING, ModelCapability.REASONING)
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING)
         )
         val claudeModel = AIModelInfo(
             id = "claude-3-5-sonnet-20241022",
             displayName = "Claude 3.5 Sonnet",
             providerId = "claude",
             defaultLevel = AILevel.HIGH,
-            capabilities = setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.CODING, ModelCapability.WRITING)
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING)
         )
 
         return listOf(
@@ -72,12 +71,10 @@ class QuestionnaireAndRoutingTest {
     @Test
     fun testGenerateAssignments_strictlyExcludesDisabledProviders() {
         val providers = createSampleProviders()
-        // Disable Gemini and Claude; only OpenAI enabled
         val enabledIds = setOf("openai")
 
-        val assignments = QuestionnaireEngine.generateAssignments(providers, enabledIds)
+        val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
 
-        // All assignments must be assigned to OpenAI
         assignments.forEach { (_, assignment) ->
             assertEquals("openai", assignment.providerId)
             assertFalse(assignment.providerId == "gemini")
@@ -88,10 +85,9 @@ class QuestionnaireAndRoutingTest {
     @Test
     fun testGenerateAssignments_withGeminiDisabled_noGeminiEverAssigned() {
         val providers = createSampleProviders()
-        // Gemini disabled, OpenAI and Claude enabled
         val enabledIds = setOf("openai", "claude")
 
-        val assignments = QuestionnaireEngine.generateAssignments(providers, enabledIds)
+        val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
 
         assignments.forEach { (_, assignment) ->
             assertTrue(assignment.providerId == "openai" || assignment.providerId == "claude")
