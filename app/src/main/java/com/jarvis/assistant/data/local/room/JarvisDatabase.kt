@@ -24,7 +24,7 @@ abstract class JarvisDatabase : RoomDatabase() {
                     context.applicationContext,
                     JarvisDatabase::class.java,
                     "jarvis_database.db"
-                ).fallbackToDestructiveMigration().build()
+                ).build()
                 INSTANCE = instance
                 instance
             }

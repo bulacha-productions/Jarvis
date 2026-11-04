@@ -171,14 +171,14 @@ private fun computeDistribution(
     ModelTask.values().forEach { task ->
         val level = userPrefs[task] ?: task.defaultLevel
         val (providerId, modelName, reason) = when (task) {
-            ModelTask.GENERAL_CHAT -> Triple("gemini", "gemini-2.5-flash", "Equilíbrio ideal entre velocidade, naturalidade de diálogo e fluência.")
-            ModelTask.QUICK_QUESTIONS -> Triple("gemini", "gemini-1.5-flash", "Baixíssima latência para consultas e comandos rápidos.")
-            ModelTask.CODING -> Triple("claude", "claude-3-5-sonnet", "Líder em precisão sintática, refatoração e depuração de código.")
+            ModelTask.GENERAL_CHAT -> Triple("gemini", "gemini-2.0-flash", "Equilíbrio ideal entre velocidade, naturalidade de diálogo e fluência.")
+            ModelTask.QUICK_QUESTIONS -> Triple("gemini", "gemini-2.0-flash", "Baixíssima latência para consultas e comandos rápidos.")
+            ModelTask.CODING -> Triple("claude", "claude-3-5-sonnet-20241022", "Líder em precisão sintática, refatoração e depuração de código.")
             ModelTask.COMPLEX_REASONING -> Triple("openai", "o3-mini", "Encadeamento dedutivo, resolução lógica e matemática avançada.")
-            ModelTask.RESEARCH -> Triple("gemini", "gemini-2.5-flash", "Janela ultra-longa de contexto para síntese de documentos densos.")
-            ModelTask.CREATIVE_WRITING -> Triple("claude", "claude-3-5-sonnet", "Prosa expressiva e vocabulário narrativo apurado.")
-            ModelTask.IMAGE_ANALYSIS -> Triple("gemini", "gemini-2.5-flash", "Visão computacional multimodal de alta sensibilidade e OCR.")
-            ModelTask.DOCUMENT_ANALYSIS -> Triple("gemini", "gemini-2.5-pro", "Compreensão aprofundada de arquivos densos, tabelas e PDFs.")
+            ModelTask.RESEARCH -> Triple("gemini", "gemini-2.0-flash", "Janela ultra-longa de contexto para síntese de documentos densos.")
+            ModelTask.CREATIVE_WRITING -> Triple("claude", "claude-3-5-sonnet-20241022", "Prosa expressiva e vocabulário narrativo apurado.")
+            ModelTask.IMAGE_ANALYSIS -> Triple("gemini", "gemini-2.0-flash", "Visão computacional multimodal de alta sensibilidade e OCR.")
+            ModelTask.DOCUMENT_ANALYSIS -> Triple("gemini", "gemini-2.0-flash", "Compreensão aprofundada de arquivos densos, tabelas e PDFs.")
         }
         outAssignments[task.id] = TaskAssignment(task, providerId, modelName, level, reason)
     }

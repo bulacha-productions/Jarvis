@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
         // Provedores de IA e Roteador Central
         val geminiProvider = GeminiProvider(applicationContext) { secureKeyStore.getApiKey("gemini") }
         val openaiProvider = OpenAIProvider(applicationContext, { secureKeyStore.getApiKey("openai") })
-        val claudeProvider = ClaudeProvider { secureKeyStore.getApiKey("claude") }
+        val claudeProvider = ClaudeProvider(applicationContext) { secureKeyStore.getApiKey("claude") }
         val router = JarvisRouter(listOf(geminiProvider, openaiProvider, claudeProvider))
 
         val chatViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {

@@ -16,20 +16,22 @@ class MultiAgentOrchestrator(
 ) {
 
     /**
-     * Limite rígido anti-loop de iterações consecutivas entre agentes
+     * Limite rígido anti-loop de iterações entre agentes
      */
     private val MAX_AGENT_STEPS = 3
 
     /**
-     * Analisa o prompt e determina se a requisição se beneficia de colaboração multiagente
+     * Analisa o prompt e determina o plano de execução
      */
     fun createExecutionPlan(
         prompt: String,
         attachment: Attachment?,
         overrideLevel: AILevel?,
-        isMultiAgentEnabled: Boolean
+        isMultiAgentEnabled: Boolean,
+        manualProviderId: String?
     ): AgentPlan {
-        if (!isMultiAgentEnabled) {
+        // Se houver seleção manual ou multiagente desativado, rota direta
+        if (!isMultiAgentEnabled || !manualProviderId.isNullOrBlank()) {
             val detectedTask = CapabilityDetector.detectTask(prompt, attachment)
             val role = AgentRole.fromTaskId(detectedTask.id)
             return AgentPlan(
@@ -46,7 +48,7 @@ class MultiAgentOrchestrator(
                         promptInstruction = prompt
                     )
                 ),
-                explanation = "Modo multiagente desativado ou consulta pontual."
+                explanation = if (!manualProviderId.isNullOrBlank()) "Seleção manual do provedor '$manualProviderId'." else "Modo multiagente desativado."
             )
         }
 
@@ -75,16 +77,15 @@ class MultiAgentOrchestrator(
                 cleanPrompt.contains("matemática") || cleanPrompt.contains("resolva o problema") ||
                 cleanPrompt.contains("otimize") || cleanPrompt.contains("equação")
 
-        // Complex collaboration conditions
+        // Critérios para orquestração de múltiplos especialistas
         val isComplex = (isCodingIntent && isResearchIntent) ||
                 (isCodingIntent && isAnalyticIntent) ||
                 (isResearchIntent && isCreativeIntent) ||
                 (isResearchIntent && isAnalyticIntent) ||
                 (hasAttachment && (isCodingIntent || isAnalyticIntent)) ||
-                (cleanPrompt.length > 220 && (isCodingIntent || isAnalyticIntent || isResearchIntent))
+                (cleanPrompt.length > 200 && (isCodingIntent || isAnalyticIntent || isResearchIntent))
 
         if (!isComplex) {
-            // Single agent direct route
             val task = CapabilityDetector.detectTask(prompt, attachment)
             val agent = AgentRole.fromTaskId(task.id)
             return AgentPlan(
@@ -105,21 +106,20 @@ class MultiAgentOrchestrator(
             )
         }
 
-        // Multi-agent workflow synthesis
+        // Montagem do pipeline de especialistas
         val steps = mutableListOf<AgentTaskStep>()
         val participants = mutableListOf<AgentRole>()
 
         if (isResearchIntent && isCodingIntent) {
-            // Pipeline: Pesquisador levanta requisitos -> Programador implementa -> Jarvis consolida
             participants.add(AgentRole.RESEARCHER)
             steps.add(
                 AgentTaskStep(
                     stepIndex = 1,
                     agent = AgentRole.RESEARCHER,
                     assignedTask = ModelTask.RESEARCH,
-                    specificGoal = "Mapear padrões, especificações técnicas e melhores práticas.",
+                    specificGoal = "Levantar especificações técnicas e melhores práticas.",
                     targetLevel = AILevel.MEDIUM,
-                    promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Identifique especificações técnicas, bibliotecas recomendadas e melhores práticas para: $prompt"
+                    promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Identifique bibliotecas e requisitos técnicos para: $prompt"
                 )
             )
 
@@ -129,20 +129,19 @@ class MultiAgentOrchestrator(
                     stepIndex = 2,
                     agent = AgentRole.PROGRAMMER,
                     assignedTask = ModelTask.CODING,
-                    specificGoal = "Implementar código estruturado, limpo e testável com base no plano.",
+                    specificGoal = "Implementar o código limpo e arquitetado.",
                     targetLevel = AILevel.HIGH,
-                    promptInstruction = "Atue como o Agente de Programação do Jarvis. Gere o código completo, robusto e documentado para atender à solicitação do usuário."
+                    promptInstruction = "Atue como o Agente de Programação do Jarvis. Gere o código completo e estruturado para: $prompt"
                 )
             )
         } else if (isCodingIntent && isAnalyticIntent) {
-            // Pipeline: Programador desenvolve -> Analítico valida complexidade matemática
             participants.add(AgentRole.PROGRAMMER)
             steps.add(
                 AgentTaskStep(
                     stepIndex = 1,
                     agent = AgentRole.PROGRAMMER,
                     assignedTask = ModelTask.CODING,
-                    specificGoal = "Construir algoritmo e arquitetura de software.",
+                    specificGoal = "Construir algoritmo e solução técnica.",
                     targetLevel = AILevel.HIGH,
                     promptInstruction = "Atue como o Agente de Programação do Jarvis. Construa a implementação de código para: $prompt"
                 )
@@ -154,22 +153,21 @@ class MultiAgentOrchestrator(
                     stepIndex = 2,
                     agent = AgentRole.ANALYST,
                     assignedTask = ModelTask.COMPLEX_REASONING,
-                    specificGoal = "Analisar complexidade assintótica O(n), casos de borda e validação lógica.",
+                    specificGoal = "Validar complexidade algorítmica, casos de borda e integridade matemática.",
                     targetLevel = AILevel.HIGH,
-                    promptInstruction = "Atue como o Agente Analítico do Jarvis. Valide o raciocínio matemático, complexidade algorítmica e casos limite da solução proposta."
+                    promptInstruction = "Atue como o Agente Analítico do Jarvis. Valide a consistência lógica e casos limites de: $prompt"
                 )
             )
         } else if (isResearchIntent && isCreativeIntent) {
-            // Pipeline: Pesquisa fatos -> Criativo compõe narrativa
             participants.add(AgentRole.RESEARCHER)
             steps.add(
                 AgentTaskStep(
                     stepIndex = 1,
                     agent = AgentRole.RESEARCHER,
                     assignedTask = ModelTask.RESEARCH,
-                    specificGoal = "Coletar referências e contexto factual.",
+                    specificGoal = "Coletar referências factuais verídicas.",
                     targetLevel = AILevel.MEDIUM,
-                    promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Colete fatos verídicos e pontos-chave para: $prompt"
+                    promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Mapeie fatos-chave para: $prompt"
                 )
             )
 
@@ -181,50 +179,37 @@ class MultiAgentOrchestrator(
                     assignedTask = ModelTask.CREATIVE_WRITING,
                     specificGoal = "Compor texto cativante e estilisticamente refinado.",
                     targetLevel = AILevel.MEDIUM,
-                    promptInstruction = "Atue como o Agente Criativo do Jarvis. Elabore a redação criativa final com base nos fatos mapeados."
+                    promptInstruction = "Atue como o Agente Criativo do Jarvis. Elabore a redação com base nos fatos levantados para: $prompt"
                 )
             )
         } else {
-            // Complex problem: Analítico estrutura o plano -> Jarvis executa e refina
             participants.add(AgentRole.ANALYST)
             steps.add(
                 AgentTaskStep(
                     stepIndex = 1,
                     agent = AgentRole.ANALYST,
                     assignedTask = ModelTask.COMPLEX_REASONING,
-                    specificGoal = "Decomposição lógica e análise crítica de variáveis.",
+                    specificGoal = "Análise analítica estruturada de variáveis e deduções.",
                     targetLevel = AILevel.HIGH,
-                    promptInstruction = "Atue como o Agente Analítico do Jarvis. Estruture uma análise lógica detalhada com prós, contras e deduções sobre: $prompt"
-                )
-            )
-
-            participants.add(AgentRole.COORDINATOR)
-            steps.add(
-                AgentTaskStep(
-                    stepIndex = 2,
-                    agent = AgentRole.COORDINATOR,
-                    assignedTask = ModelTask.GENERAL_CHAT,
-                    specificGoal = "Consolidar conclusões acionáveis e plano de execução.",
-                    targetLevel = overrideLevel ?: AILevel.MEDIUM,
-                    promptInstruction = "Atue como o Jarvis Central. Sintetize as conclusões analíticas em uma resposta final coesa, elegante e direta."
+                    promptInstruction = "Atue como o Agente Analítico do Jarvis. Estruture uma análise lógica detalhada sobre: $prompt"
                 )
             )
         }
 
-        // Loop prevention safeguard: ensure steps count <= MAX_AGENT_STEPS
+        participants.add(AgentRole.COORDINATOR)
         val safeSteps = steps.take(MAX_AGENT_STEPS)
 
         return AgentPlan(
             isMultiAgentNeeded = true,
-            executionGoal = "Colaboração multiagente coordenada.",
+            executionGoal = "Colaboração multiagente com síntese final obrigatória pelo Jarvis Central.",
             participatingAgents = participants.distinct(),
             steps = safeSteps,
-            explanation = "Tarefa multifacetada distribuída entre ${participants.joinToString { it.displayName }}."
+            explanation = "Tarefa multifacetada distribuída entre especialistas com consolidação central."
         )
     }
 
     /**
-     * Executa a orquestração multiagente completa com streaming de progresso e síntese unificada
+     * Executa a orquestração multiagente completa com chamadas reais aos provedores ativados
      */
     fun orchestrate(
         prompt: String,
@@ -232,24 +217,51 @@ class MultiAgentOrchestrator(
         attachment: Attachment?,
         overrideLevel: AILevel?,
         taskAssignments: Map<String, TaskAssignment>,
-        isMultiAgentEnabled: Boolean
+        enabledProviderIds: Set<String>,
+        isMultiAgentEnabled: Boolean,
+        manualProviderId: String? = null
     ): Flow<String> = flow {
-        val plan = createExecutionPlan(prompt, attachment, overrideLevel, isMultiAgentEnabled)
+        // Validação estrita de seleção manual
+        if (!manualProviderId.isNullOrBlank()) {
+            if (manualProviderId !in enabledProviderIds) {
+                emit("O provedor '$manualProviderId' foi selecionado manualmente, mas está desativado nas Configurações. Ative-o para utilizá-lo.")
+                return@flow
+            }
+            val manualProvider = providers.find { it.id == manualProviderId }
+            if (manualProvider == null || !manualProvider.isAvailable()) {
+                emit("O provedor '$manualProviderId' foi selecionado manualmente, mas sua chave de API não está configurada ou válida. Acesse as Configurações.")
+                return@flow
+            }
+
+            manualProvider.generateStreamResponse(
+                prompt = prompt,
+                history = history,
+                level = overrideLevel ?: AILevel.MEDIUM,
+                modelName = "",
+                attachment = attachment
+            ).collect { chunk ->
+                emit(chunk)
+            }
+            return@flow
+        }
+
+        // Cria o plano de execução
+        val plan = createExecutionPlan(prompt, attachment, overrideLevel, isMultiAgentEnabled, manualProviderId)
 
         // Se for execução direta em agente único
-        if (!plan.isMultiAgentNeeded || plan.steps.size <= 1) {
-            val step = plan.steps.first()
-            val (provider, modelName) = resolveProviderAndModel(step.assignedTask, step.targetLevel, taskAssignments)
+        if (!plan.isMultiAgentNeeded || plan.steps.isEmpty()) {
+            val task = CapabilityDetector.detectTask(prompt, attachment)
+            val (provider, modelName) = resolveProviderAndModel(task, overrideLevel ?: task.defaultLevel, taskAssignments, enabledProviderIds)
 
             if (provider == null) {
-                emit("Nenhum provedor de IA com credencial ativa está configurado. Cadastre sua chave do Google Gemini, OpenAI ou Claude nas Configurações.")
+                emit("Nenhum provedor de IA ativado com chave configurada está disponível. Acesse as Configurações para ativar o Google Gemini, OpenAI ou Claude.")
                 return@flow
             }
 
             provider.generateStreamResponse(
                 prompt = prompt,
                 history = history,
-                level = step.targetLevel,
+                level = overrideLevel ?: task.defaultLevel,
                 modelName = modelName,
                 attachment = attachment
             ).collect { chunk ->
@@ -258,43 +270,39 @@ class MultiAgentOrchestrator(
             return@flow
         }
 
-        // Execução Multiagente Colaborativa (V2.0.0)
+        // Execução Multiagente Colaborativa Real
         val agentBadgesHeader = plan.participatingAgents.joinToString(separator = " ") { agent ->
             "[${agent.iconEmoji} ${agent.shortBadge}]"
         }
 
-        // Notifica o usuário no stream sobre os agentes ativados
-        emit("🤖 **JARVIS V2 — Coordenação Multiagente Ativada**\n")
-        emit("Equipe de Agentes: $agentBadgesHeader\n\n")
+        emit("🤖 **JARVIS V2.0.1 — Coordenação Multiagente**\n")
+        emit("Equipe Ativa: $agentBadgesHeader\n\n")
 
         val intermediateResults = mutableListOf<AgentStepResult>()
-        var previousContext = ""
+        var accumulatedContext = ""
 
         var stepCounter = 0
         for (step in plan.steps) {
             stepCounter++
-            // Loop prevention check
-            if (stepCounter > MAX_AGENT_STEPS) {
-                emit("\n⚠️ [Limite de segurança anti-loop atingido: finalizando síntese.]\n")
-                break
-            }
+            if (stepCounter > MAX_AGENT_STEPS) break
 
-            emit("⏳ *[Passo $stepCounter/${plan.steps.size}: ${step.agent.displayName} trabalhando...]*\n\n")
+            emit("⏳ *[Passo $stepCounter/${plan.steps.size}: ${step.agent.displayName} executando...]*\n\n")
 
-            val (provider, modelName) = resolveProviderAndModel(step.assignedTask, step.targetLevel, taskAssignments)
+            val (provider, modelName) = resolveProviderAndModel(step.assignedTask, step.targetLevel, taskAssignments, enabledProviderIds)
             if (provider == null) {
-                emit("⚠️ [Aviso: Provedor para ${step.agent.displayName} não configurado. Prosseguindo com fallback.]\n\n")
+                emit("⚠️ [Aviso: Nenhum provedor ativado para ${step.agent.displayName}. Etapa omitida.]\n\n")
                 continue
             }
 
-            // Injeta dados intermediários dos passos anteriores sem vazar informações privadas
-            val enrichedPrompt = if (previousContext.isNotBlank()) {
-                "${step.promptInstruction}\n\n[Contexto Intermediário da Equipe de Agentes]:\n$previousContext"
+            val enrichedPrompt = if (accumulatedContext.isNotBlank()) {
+                "${step.promptInstruction}\n\n[Contexto e Descobertas das Etapas Anteriores]:\n$accumulatedContext"
             } else {
                 step.promptInstruction
             }
 
             val stepOutputBuilder = StringBuilder()
+            var stepFailed = false
+
             try {
                 provider.generateStreamResponse(
                     prompt = enrichedPrompt,
@@ -307,55 +315,108 @@ class MultiAgentOrchestrator(
                 }
 
                 val resultText = stepOutputBuilder.toString().trim()
-                intermediateResults.add(
-                    AgentStepResult(
-                        stepIndex = stepCounter,
-                        agent = step.agent,
-                        summary = step.specificGoal,
-                        content = resultText,
-                        isSuccess = true
+                // Verifica se a resposta foi um erro HTTP ou de autenticação
+                if (resultText.startsWith("Erro ") || resultText.startsWith("Falha ")) {
+                    stepFailed = true
+                    intermediateResults.add(
+                        AgentStepResult(
+                            stepIndex = stepCounter,
+                            agent = step.agent,
+                            summary = "Falha na etapa",
+                            content = resultText,
+                            isSuccess = false
+                        )
                     )
-                )
-
-                previousContext = "Descoberta de ${step.agent.shortBadge}:\n" + resultText.take(1200)
+                } else {
+                    intermediateResults.add(
+                        AgentStepResult(
+                            stepIndex = stepCounter,
+                            agent = step.agent,
+                            summary = step.specificGoal,
+                            content = resultText,
+                            isSuccess = true
+                        )
+                    )
+                    accumulatedContext += "\n--- [Entrega do ${step.agent.displayName}] ---\n" + resultText.take(1500)
+                }
             } catch (e: Exception) {
+                stepFailed = true
                 intermediateResults.add(
                     AgentStepResult(
                         stepIndex = stepCounter,
                         agent = step.agent,
-                        summary = "Erro no passo",
-                        content = "Falha: ${e.message}",
+                        summary = "Exceção",
+                        content = e.message ?: "Erro desconhecido",
                         isSuccess = false
                     )
                 )
             }
         }
 
-        // Síntese final unificada pelo Jarvis Central
-        emit("✨ **Resposta Integrada Final:**\n\n")
+        // SÍNTESE FINAL OBRIGATÓRIA PELO JARVIS CENTRAL
+        emit("✨ **[Jarvis Central: Consolidando Síntese Final Integrada...]**\n\n")
 
-        val finalSuccessfulOutput = intermediateResults.lastOrNull { it.isSuccess }?.content
-        if (!finalSuccessfulOutput.isNullOrBlank()) {
-            // Emite o conteúdo completo consolidado
-            emit(finalSuccessfulOutput)
+        val successfulResults = intermediateResults.filter { it.isSuccess }
+        if (successfulResults.isEmpty()) {
+            val errorsSummary = intermediateResults.joinToString("\n") { "- ${it.agent.displayName}: ${it.content}" }
+            emit("Não foi possível concluir a colaboração multiagente devido a falhas nos provedores ativados:\n$errorsSummary")
+            return@flow
+        }
+
+        // Busca um provedor ativo para a síntese final
+        val (synthProvider, synthModel) = resolveProviderAndModel(ModelTask.GENERAL_CHAT, AILevel.HIGH, taskAssignments, enabledProviderIds)
+        if (synthProvider != null) {
+            val synthesisPrompt = buildString {
+                append("Você é o JARVIS Central (Coordenador). Os agentes especialistas da sua equipe executaram as seguintes etapas para a solicitação do usuário:\n\n")
+                successfulResults.forEach { res ->
+                    append("### ${res.agent.displayName}:\n${res.content}\n\n")
+                }
+                append("Solicitação original do usuário: \"$prompt\"\n\n")
+                append("Instrução: Elabore a resposta final unificada, elegante e coesa, incorporando as entregas dos especialistas sem repetições desnecessárias.")
+            }
+
+            try {
+                synthProvider.generateStreamResponse(
+                    prompt = synthesisPrompt,
+                    history = history,
+                    level = AILevel.HIGH,
+                    modelName = synthModel,
+                    attachment = null
+                ).collect { chunk ->
+                    emit(chunk)
+                }
+            } catch (_: Exception) {
+                // Se a síntese falhar, exibe o melhor conteúdo gerado pelos especialistas
+                emit(successfulResults.last().content)
+            }
         } else {
-            emit("Não foi possível consolidar a resposta multiagente. Verifique a conectividade com seus provedores de IA.")
+            // Emite a última entrega válida
+            emit(successfulResults.last().content)
         }
     }
 
     private suspend fun resolveProviderAndModel(
         task: ModelTask,
         level: AILevel,
-        taskAssignments: Map<String, TaskAssignment>
+        taskAssignments: Map<String, TaskAssignment>,
+        enabledProviderIds: Set<String>
     ): Pair<AIProvider?, String> {
         val assignment = taskAssignments[task.id]
         val targetProviderId = assignment?.providerId ?: "gemini"
         var targetModelName = assignment?.modelName ?: ""
 
-        var provider = providers.find { it.id == targetProviderId && it.isAvailable() }
+        // O provedor DEVE estar habilitado em enabledProviderIds e ter chave válida
+        var provider: AIProvider? = null
+        if (targetProviderId in enabledProviderIds) {
+            val candidate = providers.find { it.id == targetProviderId }
+            if (candidate != null && candidate.isAvailable()) {
+                provider = candidate
+            }
+        }
+
+        // Se o provedor atribuído estiver desativado ou indisponível, busca OUTRO provedor habilitado
         if (provider == null) {
-            // Fallback para qualquer provedor disponível com chave ativa
-            provider = providers.firstOrNull { it.id != "unconfigured_system" && it.isAvailable() }
+            provider = providers.firstOrNull { it.id in enabledProviderIds && it.id != "unconfigured_system" && it.isAvailable() }
             targetModelName = ""
         }
 

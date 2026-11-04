@@ -28,19 +28,21 @@ class OpenAIProvider(
     private val baseUrlProvider: () -> String = { "https://api.openai.com/v1" }
 ) : AIProvider {
 
+    constructor(apiKeyProvider: () -> String, baseUrlProvider: () -> String = { "https://api.openai.com/v1" }) : this(null, apiKeyProvider, baseUrlProvider)
+
     override val id: String = "openai"
     override val type: ProviderType = ProviderType.OPENAI
     override val displayName: String = "OpenAI"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
     private val defaultModels = listOf(
         AIModelInfo(
             id = "gpt-4o",
-            displayName = "GPT-4o (Omni)",
+            displayName = "GPT-4o",
             providerId = id,
             defaultLevel = AILevel.HIGH,
             capabilities = setOf(
@@ -48,10 +50,9 @@ class OpenAIProvider(
                 ModelCapability.CODING,
                 ModelCapability.REASONING,
                 ModelCapability.IMAGE_ANALYSIS,
-                ModelCapability.DOCUMENT_ANALYSIS,
                 ModelCapability.LONG_CONTEXT
             ),
-            description = "Modelo de alto desempenho e multimodalidade para visão, raciocínio e código."
+            description = "Modelo flagship da OpenAI com alta inteligência multimodal e velocidade."
         ),
         AIModelInfo(
             id = "gpt-4o-mini",
@@ -63,11 +64,11 @@ class OpenAIProvider(
                 ModelCapability.CODING,
                 ModelCapability.IMAGE_ANALYSIS
             ),
-            description = "Ágil, leve e econômico para tarefas rotineiras e comandos rápidos."
+            description = "Rápido e econômico para tarefas diárias, consultas e respostas ágeis."
         ),
         AIModelInfo(
             id = "o3-mini",
-            displayName = "o3-mini (Reasoning)",
+            displayName = "o3-mini",
             providerId = id,
             defaultLevel = AILevel.HIGH,
             capabilities = setOf(
@@ -75,11 +76,11 @@ class OpenAIProvider(
                 ModelCapability.CODING,
                 ModelCapability.REASONING
             ),
-            description = "Especializado em raciocínio lógico dedutivo, matemática e algoritmos."
+            description = "Modelo de raciocínio lógico profundo, matemática e resolução de problemas estruturados."
         )
     )
 
-    override suspend fun isAvailable(): Boolean = apiKeyProvider().isNotBlank()
+    override suspend fun isAvailable(): Boolean = apiKeyProvider().trim().isNotBlank()
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
         val trimmedKey = apiKey.trim()
@@ -90,13 +91,14 @@ class OpenAIProvider(
             )
         }
 
-        val base = if (baseUrl.isNotBlank()) baseUrl.trimEnd('/') else "https://api.openai.com/v1"
+        val base = if (baseUrl.isNotBlank()) baseUrl.trimEnd('/') else baseUrlProvider().trimEnd('/')
         val url = "$base/models"
 
         try {
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $trimmedKey")
+                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
                 .get()
                 .build()
 
@@ -117,7 +119,7 @@ class OpenAIProvider(
                     401 -> ConnectionTestResult(
                         isSuccess = false,
                         statusCode = 401,
-                        message = "Erro 401: Chave de API da OpenAI inválida ou não autorizada. Verifique se a chave foi digitada corretamente."
+                        message = "Erro 401: Chave de API da OpenAI inválida ou não autorizada. Verifique sua chave nas Configurações."
                     )
                     403 -> ConnectionTestResult(
                         isSuccess = false,
@@ -139,7 +141,7 @@ class OpenAIProvider(
         } catch (e: Exception) {
             ConnectionTestResult(
                 isSuccess = false,
-                message = "Falha de conexão com a OpenAI: ${e.message}"
+                message = "Falha de conexão com a OpenAI: ${e.message ?: "Erro de rede"}"
             )
         }
     }
@@ -154,7 +156,8 @@ class OpenAIProvider(
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
-        return defaultModels.filter { it.defaultLevel == level }
+        val filtered = defaultModels.filter { it.defaultLevel == level }
+        return if (filtered.isNotEmpty()) filtered else defaultModels
     }
 
     private fun parseModels(jsonStr: String): List<AIModelInfo> {
@@ -162,6 +165,7 @@ class OpenAIProvider(
             val json = JSONObject(jsonStr)
             val data = json.optJSONArray("data") ?: JSONArray()
             val list = mutableListOf<AIModelInfo>()
+
             for (i in 0 until data.length()) {
                 val id = data.getJSONObject(i).optString("id", "")
                 if (id.startsWith("gpt") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("chatgpt")) {
@@ -215,46 +219,66 @@ class OpenAIProvider(
 
         try {
             val messagesArr = JSONArray()
-            messagesArr.put(JSONObject().apply {
-                put("role", "system")
-                put("content", "Você é o JARVIS, assistente de inteligência artificial de alta performance.")
-            })
+            val isReasoningModel = targetModel.startsWith("o1") || targetModel.startsWith("o3")
 
-            history.takeLast(10).forEach { msg ->
+            if (!isReasoningModel) {
                 messagesArr.put(JSONObject().apply {
-                    put("role", if (msg.isFromUser) "user" else "assistant")
-                    put("content", msg.content)
+                    put("role", "system")
+                    put("content", "Você é o JARVIS, assistente de inteligência artificial de alta performance.")
                 })
             }
 
-            // Current message content
-            val userContent = if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true && attachment.mimeType?.startsWith("image/") == true) {
-                try {
-                    val uri = Uri.parse(attachment.uriString)
-                    val base64 = context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
-                        Base64.encodeToString(stream.readBytes(), Base64.NO_WRAP)
-                    }
-                    if (base64 != null) {
-                        val contentParts = JSONArray()
-                        contentParts.put(JSONObject().apply {
-                            put("type", "text")
-                            put("text", prompt)
-                        })
-                        contentParts.put(JSONObject().apply {
-                            put("type", "image_url")
-                            put("image_url", JSONObject().apply {
-                                put("url", "data:${attachment.mimeType};base64,$base64")
+            history.takeLast(10).forEach { msg ->
+                if (msg.content.isNotBlank()) {
+                    messagesArr.put(JSONObject().apply {
+                        put("role", if (msg.isFromUser) "user" else "assistant")
+                        put("content", msg.content.trim())
+                    })
+                }
+            }
+
+            // Tratamento de anexo
+            val userContent = if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
+                if (attachment.mimeType?.startsWith("image/") == true) {
+                    try {
+                        val uri = Uri.parse(attachment.uriString)
+                        val base64 = context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                            Base64.encodeToString(stream.readBytes(), Base64.NO_WRAP)
+                        }
+                        if (base64 != null) {
+                            val contentParts = JSONArray()
+                            contentParts.put(JSONObject().apply {
+                                put("type", "text")
+                                put("text", prompt.trim().ifBlank { "Analise esta imagem." })
                             })
-                        })
-                        contentParts
-                    } else {
-                        prompt
+                            contentParts.put(JSONObject().apply {
+                                put("type", "image_url")
+                                put("image_url", JSONObject().apply {
+                                    put("url", "data:${attachment.mimeType};base64,$base64")
+                                })
+                            })
+                            contentParts
+                        } else {
+                            prompt.trim().ifBlank { "Olá" }
+                        }
+                    } catch (_: Exception) {
+                        prompt.trim().ifBlank { "Olá" }
                     }
-                } catch (_: Exception) {
-                    prompt
+                } else if (attachment.mimeType?.startsWith("text/") == true) {
+                    try {
+                        val uri = Uri.parse(attachment.uriString)
+                        val textContent = context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                            stream.bufferedReader().readText()
+                        }
+                        "${prompt.trim()}\n\n[Conteúdo do arquivo ${attachment.name}]:\n${textContent?.take(30000)}"
+                    } catch (_: Exception) {
+                        prompt.trim().ifBlank { "Olá" }
+                    }
+                } else {
+                    prompt.trim().ifBlank { "Olá" }
                 }
             } else {
-                prompt
+                prompt.trim().ifBlank { "Olá" }
             }
 
             messagesArr.put(JSONObject().apply {
@@ -270,6 +294,7 @@ class OpenAIProvider(
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $key")
+                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
                 .post(payload.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -279,9 +304,11 @@ class OpenAIProvider(
 
                 if (!response.isSuccessful) {
                     when (code) {
-                        401 -> emit("Erro 401 na OpenAI: Chave de API inválida ou expirada.")
-                        403 -> emit("Erro 403 na OpenAI: Permissão negada para o modelo solicitado.")
-                        429 -> emit("Erro 429 na OpenAI: Limite de cota atingido ou créditos insuficientes.")
+                        400 -> emit("Erro 400 na OpenAI: Requisição inválida ou parâmetros rejeitados.")
+                        401 -> emit("Erro 401 na OpenAI: Chave de API inválida ou expirada nas Configurações.")
+                        403 -> emit("Erro 403 na OpenAI: Permissão negada para o modelo solicitado ($targetModel).")
+                        404 -> emit("Erro 404 na OpenAI: O modelo '$targetModel' não foi encontrado na sua organização.")
+                        429 -> emit("Erro 429 na OpenAI: Limite de cota atingido ou créditos insuficientes na conta.")
                         500, 503 -> emit("Erro $code na OpenAI: Servidores temporariamente sobrecarregados.")
                         else -> emit("Erro $code na OpenAI: ${response.message}")
                     }
@@ -301,7 +328,7 @@ class OpenAIProvider(
                 }
             }
         } catch (e: Exception) {
-            emit("Falha na comunicação com a OpenAI: ${e.message}")
+            emit("Falha na comunicação com a OpenAI: ${e.message ?: "Erro desconhecido"}")
         }
     }.flowOn(Dispatchers.IO)
 }

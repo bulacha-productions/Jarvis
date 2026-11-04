@@ -28,32 +28,37 @@ jobs:
       with:
         gradle-version: '8.8'
 
-    - name: Build Debug APK
+    - name: Run Unit Tests
+      run: gradle test --stacktrace
+
+    - name: Build Debug & Release APKs
       run: gradle assembleDebug --stacktrace
 
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v2.0.0-apk
+        name: jarvis-v2.0.1-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v2.0.0-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v2.0.0
+        tag_name: v2.0.1-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v2.0.1 (Build ${{ github.run_number }})
         body: |
-          ### 🤖 Jarvis Assistant v2.0.0 — Evolução Multiagente & Correção Crítica do Gemini
-
-          **Novidades desta versão (V2.0.0):**
-          - 🛠️ **Correção Definitiva do Google Gemini (HTTP 404):** Consulta em tempo real via `models.list` filtrando por suporte a `generateContent`, normalização de nomes sem prefixos inválidos e fallback resiliente automático.
-          - 🧠 **Sistema Multiagente Completo:** Coordenação central do Jarvis com 4 agentes especializados (Programação, Pesquisa, Criativo, Analítico) acionados de acordo com a complexidade da solicitação.
-          - 🔄 **Colaboração Interagente & Proteção Anti-Loop:** Compartilhamento seguro de contexto intermediário entre especialistas com limite estrito de até 3 passos para evitar loops.
-          - 🏷️ **Badges de Agentes Colaboradores:** Visualização clara no chat de quais agentes trabalharam na síntese da resposta.
-          - ⚙️ **Painel Multiagente em Configurações:** Controle de ativação e visualização das especialidades dos agentes.
-          - 🎯 **Questionário Inteligente Calibrado:** Mapeamento de 8 responsabilidades com modelos reais e existentes.
-          - 📱 **Versionamento:** `versionName = "2.0.0"`, `versionCode = 4`, mantendo o pacote `com.jarvis.assistant`.
+          ### 🤖 Jarvis Assistant v2.0.1 — Estabilidade, Segurança e Integração Multiagente
+          
+          **Destaques da Atualização (V2.0.1 - Build 5):**
+          - 🛠️ **Google Gemini 404 Zero:** Eliminação absoluta de referências obsoletas a `gemini-1.5`. Consulta dinâmica oficial via `models.list`, validação por `supportedGenerationMethods: ["generateContent"]` e stripping de prefixos `models/`.
+          - 🛡️ **Segurança sem Plaintext:** Criptografia de chaves exclusivamente via Android Keystore (AES-256 GCM) com migração automática e exclusão de arquivos legados. `android:allowBackup="false"` no `AndroidManifest.xml` para evitar corrupção de chaves.
+          - 🔀 **Isolamento de Provedores:** Respeito absoluto a `enabledProviders`. Se um provedor estiver desativado, nenhuma parte do app (roteador, questionário, multiagente, fallback) tenta chamá-lo.
+          - 🎯 **Roteamento Manual Estrito:** Seleção explícita de IA no painel sem substituição silenciosa e com diagnóstico claro.
+          - 🧠 **Multiagente com Síntese do Jarvis Central:** Decomposição em subtarefas especializadas e consolidação final mandatória pelo Coordenador Geral (`AgentRole.COORDINATOR`).
+          - 🔒 **Assinatura Determinística:** Keystore PKCS12 dedicado (`app/keystore/jarvis-release.jks`) garantindo atualização contínua sem erro de incompatibilidade de assinatura (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
+          - 🎙️ **Reconhecimento de Voz Aprimorado:** Configuração `pt-BR`, execução no Main Looper e encerramento limpo sem erros falso-positivos.
+          - 💾 **Persistência Segura (Room 2.6.1):** Remoção de migrações destrutivas para preservação perpétua das conversas.
+          - 🛑 **Cancelamento Limpo:** Isolamento de `CancellationException` evitando mensagens de erro espúrias no histórico.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

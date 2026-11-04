@@ -27,6 +27,8 @@ class GeminiProvider(
     private val apiKeyProvider: () -> String
 ) : AIProvider {
 
+    constructor(apiKeyProvider: () -> String) : this(null, apiKeyProvider)
+
     override val id: String = "gemini"
     override val type: ProviderType = ProviderType.GEMINI
     override val displayName: String = "Google Gemini"
@@ -36,59 +38,11 @@ class GeminiProvider(
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    // Modelos oficiais reais do Google v1beta com suporte garantido a generateContent
-    private val defaultModels = listOf(
-        AIModelInfo(
-            id = "gemini-2.0-flash",
-            displayName = "Gemini 2.0 Flash",
-            providerId = id,
-            defaultLevel = AILevel.MEDIUM,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.CODING,
-                ModelCapability.REASONING,
-                ModelCapability.IMAGE_ANALYSIS,
-                ModelCapability.DOCUMENT_ANALYSIS,
-                ModelCapability.LONG_CONTEXT,
-                ModelCapability.TOOLS
-            ),
-            description = "Modelo de próxima geração com velocidade extrema, multimodalidade e raciocínio balanceado."
-        ),
-        AIModelInfo(
-            id = "gemini-1.5-pro",
-            displayName = "Gemini 1.5 Pro",
-            providerId = id,
-            defaultLevel = AILevel.HIGH,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.CODING,
-                ModelCapability.REASONING,
-                ModelCapability.IMAGE_ANALYSIS,
-                ModelCapability.DOCUMENT_ANALYSIS,
-                ModelCapability.LONG_CONTEXT,
-                ModelCapability.TOOLS
-            ),
-            description = "Janela de contexto expansiva de até 2 milhões de tokens, ideal para raciocínio complexo e leitura documental."
-        ),
-        AIModelInfo(
-            id = "gemini-1.5-flash",
-            displayName = "Gemini 1.5 Flash",
-            providerId = id,
-            defaultLevel = AILevel.LIGHT,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.IMAGE_ANALYSIS,
-                ModelCapability.CODING
-            ),
-            description = "Latência ultrabaixa para comandos instantâneos, respostas rápidas e alta disponibilidade."
-        )
-    )
-
-    // Cache dinâmico de modelos validados remotamente
+    // Cache dinâmico em memória dos modelos reais validados pela API
     @Volatile
     private var cachedRemoteModels: List<AIModelInfo> = emptyList()
 
-    override suspend fun isAvailable(): Boolean = apiKeyProvider().isNotBlank()
+    override suspend fun isAvailable(): Boolean = apiKeyProvider().trim().isNotBlank()
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
         val trimmedKey = apiKey.trim()
@@ -99,13 +53,13 @@ class GeminiProvider(
             )
         }
 
-        // Consulta real à lista de modelos disponíveis na conta/chave
+        // Endpoint oficial models.list da API v1beta
         val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$trimmedKey"
 
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Jarvis-Assistant-Android/2.0.0")
+                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
                 .get()
                 .build()
 
@@ -115,17 +69,22 @@ class GeminiProvider(
 
                 when (code) {
                     200 -> {
-                        val models = parseModels(body)
-                        if (models.isNotEmpty()) {
-                            cachedRemoteModels = models
+                        val discovered = parseModelsFromJson(body)
+                        if (discovered.isNotEmpty()) {
+                            cachedRemoteModels = discovered
+                            ConnectionTestResult(
+                                isSuccess = true,
+                                statusCode = 200,
+                                message = "Conexão com Google Gemini realizada com sucesso! (${discovered.size} modelos compatíveis com generateContent)",
+                                discoveredModels = discovered
+                            )
+                        } else {
+                            ConnectionTestResult(
+                                isSuccess = false,
+                                statusCode = 200,
+                                message = "A chave de API é válida, mas nenhum modelo com capacidade 'generateContent' foi disponibilizado para esta conta."
+                            )
                         }
-                        val finalModels = if (models.isNotEmpty()) models else defaultModels
-                        ConnectionTestResult(
-                            isSuccess = true,
-                            statusCode = 200,
-                            message = "Conexão com Google Gemini realizada com sucesso! (${finalModels.size} modelos compatíveis com generateContent)",
-                            discoveredModels = finalModels
-                        )
                     }
                     400 -> ConnectionTestResult(
                         isSuccess = false,
@@ -135,24 +94,29 @@ class GeminiProvider(
                     401, 403 -> ConnectionTestResult(
                         isSuccess = false,
                         statusCode = code,
-                        message = "Erro $code: Autenticação Gemini rejeitada. Verifique se a chave é válida e possui permissão na Generative Language API."
+                        message = "Erro $code: Autenticação rejeitada pelo Google. Verifique se a chave é válida e possui permissão na Generative Language API."
                     )
                     429 -> ConnectionTestResult(
                         isSuccess = false,
                         statusCode = 429,
                         message = "Erro 429: Limite de requisições excedido no Google Gemini (Quota Exceeded)."
                     )
+                    500, 503 -> ConnectionTestResult(
+                        isSuccess = false,
+                        statusCode = code,
+                        message = "Erro $code: Servidores do Google temporariamente instáveis."
+                    )
                     else -> ConnectionTestResult(
                         isSuccess = false,
                         statusCode = code,
-                        message = "Erro $code: Falha de resposta dos servidores do Google."
+                        message = "Erro $code: Falha de resposta dos servidores do Google (${response.message})."
                     )
                 }
             }
         } catch (e: Exception) {
             ConnectionTestResult(
                 isSuccess = false,
-                message = "Falha de conexão com a API do Google Gemini: ${e.message}"
+                message = "Falha de conexão com a API do Google Gemini: ${e.message ?: "Erro de rede"}"
             )
         }
     }
@@ -167,16 +131,16 @@ class GeminiProvider(
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
-        val models = if (cachedRemoteModels.isNotEmpty()) cachedRemoteModels else defaultModels
+        val models = cachedRemoteModels
         val filtered = models.filter { it.defaultLevel == level }
-        return if (filtered.isNotEmpty()) filtered else defaultModels.filter { it.defaultLevel == level }
+        return if (filtered.isNotEmpty()) filtered else models
     }
 
     /**
      * Filtra rigorosamente os modelos retornados por models.list
      * Requisito: deve conter "generateContent" em supportedGenerationMethods
      */
-    private fun parseModels(jsonStr: String): List<AIModelInfo> {
+    fun parseModelsFromJson(jsonStr: String): List<AIModelInfo> {
         return try {
             val json = JSONObject(jsonStr)
             val modelsArr = json.optJSONArray("models") ?: JSONArray()
@@ -187,7 +151,7 @@ class GeminiProvider(
                 val rawName = obj.optString("name", "").trim()
                 val cleanName = rawName.removePrefix("models/")
 
-                // Verifica se suporta generateContent
+                // Verifica se o modelo suporta geração de conteúdo textual
                 val methodsArr = obj.optJSONArray("supportedGenerationMethods") ?: JSONArray()
                 var supportsGenerateContent = false
                 for (m in 0 until methodsArr.length()) {
@@ -197,8 +161,8 @@ class GeminiProvider(
                     }
                 }
 
-                // Apenas modelos Gemini reais que geram conteúdo de texto/visão
-                if (supportsGenerateContent && cleanName.contains("gemini") && !cleanName.contains("embedding")) {
+                // Apenas modelos que suportam generateContent e não são exclusivamente embeddings
+                if (supportsGenerateContent && !cleanName.contains("embedding") && !cleanName.contains("aqa")) {
                     val isPro = cleanName.contains("pro")
                     val isFlash = cleanName.contains("flash")
 
@@ -234,24 +198,39 @@ class GeminiProvider(
     }
 
     /**
-     * Normaliza e resolve o modelo alvo real, corrigindo referências obsoletas ou prefixos inválidos
+     * Escolhe dinamicamente o modelo real mais adequado com base nos modelos reais disponíveis
      */
-    private fun resolveRealModelName(requestedModel: String, level: AILevel): String {
-        val clean = requestedModel.trim().removePrefix("models/")
-
-        // Mapeia identificadores inexistentes ou obsoletos que geravam HTTP 404
-        if (clean == "gemini-2.5-flash" || clean == "gemini-flash" || clean.isBlank()) {
-            return when (level) {
-                AILevel.LIGHT -> "gemini-1.5-flash"
-                AILevel.MEDIUM -> "gemini-2.0-flash"
-                AILevel.HIGH -> "gemini-1.5-pro"
+    private suspend fun resolveDynamicModel(requestedModel: String, level: AILevel, apiKey: String): String {
+        // Se a lista de modelos ainda não estiver em cache, consulta agora
+        if (cachedRemoteModels.isEmpty()) {
+            val testRes = testConnection(apiKey)
+            if (testRes.isSuccess && testRes.discoveredModels.isNotEmpty()) {
+                cachedRemoteModels = testRes.discoveredModels
             }
         }
-        if (clean == "gemini-2.5-pro") {
-            return "gemini-1.5-pro"
+
+        val clean = requestedModel.trim().removePrefix("models/")
+        val available = cachedRemoteModels
+
+        // 1. Se o modelo solicitado existe exatamente na lista de modelos disponíveis, utilize-o
+        if (clean.isNotBlank() && available.any { it.id == clean }) {
+            return clean
         }
 
-        return clean
+        // 2. Se temos modelos disponíveis, selecione o mais compatível com o nível
+        if (available.isNotEmpty()) {
+            val byLevel = available.filter { it.defaultLevel == level }
+            if (byLevel.isNotEmpty()) {
+                return byLevel.first().id
+            }
+            // Fallback para qualquer modelo disponível na conta
+            val flashModel = available.find { it.id.contains("flash") }
+            if (flashModel != null) return flashModel.id
+            return available.first().id
+        }
+
+        // 3. Se a lista remota não pôde ser carregada, use o identificador do modelo solicitado ou o padrão GA atual
+        return if (clean.isNotBlank()) clean else "gemini-2.0-flash"
     }
 
     override fun generateStreamResponse(
@@ -267,131 +246,115 @@ class GeminiProvider(
             return@flow
         }
 
-        var targetModel = resolveRealModelName(modelName, level)
-        var responseSuccess = false
+        val targetModel = resolveDynamicModel(modelName, level, key)
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$key"
 
-        // Tentativa principal + fallback automático se ocorrer 404
-        for (attempt in 1..2) {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$targetModel:generateContent?key=$key"
+        try {
+            val contentsArr = JSONArray()
 
-            try {
-                val contentsArr = JSONArray()
+            // Formata o histórico sanitizado com alternância estrita (user <-> model)
+            // Regra Gemini: primeiro item DEVE ser user, e mensagens não podem ser vazias
+            var lastRole: String? = null
+            val sanitizedHistory = history.filter { it.content.isNotBlank() }.takeLast(8)
 
-                // Formata o histórico sanitizado com alternância estrita (user <-> model)
-                // Regra Gemini: primeiro item DEVE ser user, e mensagens não podem ser vazias
-                var lastRole: String? = null
-                val sanitizedHistory = history.filter { it.content.isNotBlank() }.takeLast(8)
-
-                for (msg in sanitizedHistory) {
-                    val currentRole = if (msg.isFromUser) "user" else "model"
-                    if (contentsArr.length() == 0 && currentRole != "user") {
-                        // Ignora se a primeira mensagem do histórico não for de usuário
-                        continue
-                    }
-                    if (currentRole == lastRole) {
-                        // Evita mensagens consecutivas com o mesmo papel
-                        continue
-                    }
-
-                    val parts = JSONArray().put(JSONObject().put("text", msg.content.trim()))
-                    contentsArr.put(JSONObject().apply {
-                        put("role", currentRole)
-                        put("parts", parts)
-                    })
-                    lastRole = currentRole
+            for (msg in sanitizedHistory) {
+                val currentRole = if (msg.isFromUser) "user" else "model"
+                if (contentsArr.length() == 0 && currentRole != "user") {
+                    continue
+                }
+                if (currentRole == lastRole) {
+                    continue
                 }
 
-                // Mensagem atual do usuário
-                val currentParts = JSONArray()
-                currentParts.put(JSONObject().put("text", prompt.trim().ifBlank { "Olá" }))
-
-                // Anexo multimodal (Imagem)
-                if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
-                    try {
-                        val uri = Uri.parse(attachment.uriString)
-                        context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
-                            val bytes = stream.readBytes()
-                            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                            val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
-                            currentParts.put(JSONObject().apply {
-                                put("inlineData", JSONObject().apply {
-                                    put("mimeType", mime)
-                                    put("data", base64)
-                                })
-                            })
-                        }
-                    } catch (_: Exception) {}
-                }
-
+                val parts = JSONArray().put(JSONObject().put("text", msg.content.trim()))
                 contentsArr.put(JSONObject().apply {
-                    put("role", "user")
-                    put("parts", currentParts)
+                    put("role", currentRole)
+                    put("parts", parts)
                 })
+                lastRole = currentRole
+            }
 
-                val payload = JSONObject().apply {
-                    put("contents", contentsArr)
-                    put("generationConfig", JSONObject().apply {
-                        put("temperature", 0.7)
-                    })
-                }
+            // Mensagem atual do usuário
+            val currentParts = JSONArray()
+            currentParts.put(JSONObject().put("text", prompt.trim().ifBlank { "Olá" }))
 
-                val request = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "Jarvis-Assistant-Android/2.0.0")
-                    .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    val code = response.code
-                    val body = response.body?.string() ?: ""
-
-                    if (!response.isSuccessful) {
-                        if (code == 404 && attempt == 1) {
-                            // Erro 404: o modelo solicitado não existe nessa chave/região. Fallback transparente!
-                            val fallbackModel = if (targetModel != "gemini-1.5-flash") "gemini-1.5-flash" else "gemini-2.0-flash"
-                            targetModel = fallbackModel
-                            // Executa próxima tentativa
-                            return@use
-                        }
-
-                        when (code) {
-                            400 -> emit("Erro 400 no Gemini: Formato de requisição rejeitado pela API do Google.")
-                            401, 403 -> emit("Erro $code no Gemini: Autenticação falhou. Verifique se sua chave de API está ativa e possui permissão nas Configurações.")
-                            404 -> emit("Erro 404 no Gemini: O modelo '$targetModel' não foi localizado na API v1beta do Google Generative Language.")
-                            429 -> emit("Erro 429 no Gemini: Limite de cota atingido na API. Aguarde alguns segundos.")
-                            500, 503 -> emit("Erro $code no Gemini: Servidores do Google temporariamente instáveis.")
-                            else -> emit("Erro $code no Gemini: Falha na resposta da API.")
-                        }
-                        responseSuccess = false
-                        return@flow
+            // Anexo multimodal
+            if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
+                try {
+                    val uri = Uri.parse(attachment.uriString)
+                    context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                        val bytes = stream.readBytes()
+                        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                        val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
+                        currentParts.put(JSONObject().apply {
+                            put("inlineData", JSONObject().apply {
+                                put("mimeType", mime)
+                                put("data", base64)
+                            })
+                        })
                     }
+                } catch (_: Exception) {}
+            }
 
-                    val json = JSONObject(body)
-                    val text = json.optJSONArray("candidates")
-                        ?.optJSONObject(0)
-                        ?.optJSONObject("content")
-                        ?.optJSONArray("parts")
-                        ?.optJSONObject(0)
-                        ?.optString("text")
+            contentsArr.put(JSONObject().apply {
+                put("role", "user")
+                put("parts", currentParts)
+            })
 
-                    if (!text.isNullOrBlank()) {
-                        emit(text)
-                        responseSuccess = true
-                    } else {
-                        emit("O modelo Google Gemini processou a solicitação mas não retornou texto na resposta.")
-                        responseSuccess = true
+            val payload = JSONObject().apply {
+                put("contents", contentsArr)
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.7)
+                })
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                val body = response.body?.string() ?: ""
+
+                if (!response.isSuccessful) {
+                    when (code) {
+                        400 -> emit("Erro 400 no Gemini: Formato de mensagem ou parâmetros rejeitados pela API do Google.")
+                        401, 403 -> emit("Erro $code no Gemini: Autenticação rejeitada. Verifique se sua chave de API está ativa e autorizada nas Configurações.")
+                        404 -> {
+                            // Atualiza os modelos remotamente para diagnóstico honesto
+                            val refreshRes = testConnection(key)
+                            val availableNames = if (refreshRes.isSuccess) {
+                                refreshRes.discoveredModels.joinToString { it.id }
+                            } else {
+                                "Nenhum modelo disponível identificado"
+                            }
+                            emit("Erro 404 no Gemini: O modelo '$targetModel' não foi localizado na API v1beta do Google para a sua chave. Modelos compatíveis encontrados na sua conta: [$availableNames]. Selecione um modelo válido nas Configurações.")
+                        }
+                        429 -> emit("Erro 429 no Gemini: Limite de cota atingido na API Generative Language. Aguarde alguns instantes.")
+                        500, 503 -> emit("Erro $code no Gemini: Servidores do Google temporariamente instáveis.")
+                        else -> emit("Erro $code no Gemini: ${response.message}")
                     }
+                    return@use
                 }
 
-                if (responseSuccess) {
-                    break
-                }
-            } catch (e: Exception) {
-                if (attempt == 2 || !e.message.orEmpty().contains("404")) {
-                    emit("Falha na comunicação com o Google Gemini: ${e.message}")
-                    break
+                val json = JSONObject(body)
+                val text = json.optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text")
+
+                if (!text.isNullOrBlank()) {
+                    emit(text)
+                } else {
+                    emit("O modelo Google Gemini processou a solicitação mas não retornou conteúdo textual.")
                 }
             }
+        } catch (e: Exception) {
+            emit("Falha na comunicação com o Google Gemini: ${e.message ?: "Erro desconhecido"}")
         }
     }.flowOn(Dispatchers.IO)
 }

@@ -9,34 +9,36 @@ object QuestionnaireEngine {
 
     fun generateOptimalAssignments(
         providers: List<AIProvider>,
+        enabledProviderIds: Set<String> = setOf("gemini", "openai", "claude"),
         userPreferences: Map<ModelTask, AILevel> = emptyMap()
     ): List<TaskAssignment> {
+        val activeProviders = providers.filter { it.id in enabledProviderIds && it.type.name != "MOCK" }
         return ModelTask.values().map { task ->
             val preferredLevel = userPreferences[task] ?: task.defaultLevel
-            val assignment = pickOptimalModelForTask(task, preferredLevel, providers)
-            assignment
+            pickOptimalModelForTask(task, preferredLevel, activeProviders, enabledProviderIds)
         }
     }
 
     private fun pickOptimalModelForTask(
         task: ModelTask,
         level: AILevel,
-        providers: List<AIProvider>
+        activeProviders: List<AIProvider>,
+        enabledProviderIds: Set<String>
     ): TaskAssignment {
-        val availableProviders = providers.filter { it.type.name != "MOCK" }
+        val gemini = activeProviders.find { it.id == "gemini" && "gemini" in enabledProviderIds }
+        val openai = activeProviders.find { it.id == "openai" && "openai" in enabledProviderIds }
+        val claude = activeProviders.find { it.id == "claude" && "claude" in enabledProviderIds }
 
+        // Heurística de distribuição respeitando rigorosamente os provedores ATIVADOS
         return when (task) {
             ModelTask.GENERAL_CHAT -> {
-                val gemini = availableProviders.find { it.id == "gemini" }
-                val openai = availableProviders.find { it.id == "openai" }
-                val claude = availableProviders.find { it.id == "claude" }
                 when {
                     gemini != null -> TaskAssignment(
                         task = task,
                         providerId = "gemini",
                         modelName = "gemini-2.0-flash",
                         level = level,
-                        recommendationReason = "Equilíbrio ideal entre velocidade, naturalidade de diálogo e fluência em português."
+                        recommendationReason = "Equilíbrio ideal entre velocidade, naturalidade de diálogo e fluência."
                     )
                     openai != null -> TaskAssignment(
                         task = task,
@@ -48,36 +50,50 @@ object QuestionnaireEngine {
                     claude != null -> TaskAssignment(
                         task = task,
                         providerId = "claude",
-                        modelName = "claude-3-5-haiku",
+                        modelName = "claude-3-5-haiku-20241022",
                         level = level,
                         recommendationReason = "Respostas claras e estruturadas com baixa latência."
                     )
                     else -> TaskAssignment(
                         task = task,
-                        providerId = "gemini",
+                        providerId = activeProviders.firstOrNull()?.id ?: "gemini",
                         modelName = "gemini-2.0-flash",
                         level = level,
-                        recommendationReason = "Padrão recomendado para conversas diárias (configure a chave em Configurações)."
+                        recommendationReason = "Padrão recomendado para conversas diárias."
                     )
                 }
             }
             ModelTask.QUICK_QUESTIONS -> {
-                TaskAssignment(
-                    task = task,
-                    providerId = "gemini",
-                    modelName = "gemini-1.5-flash",
-                    level = AILevel.LIGHT,
-                    recommendationReason = "Baixíssima latência para consultas instantâneas e comandos diretos."
-                )
+                when {
+                    gemini != null -> TaskAssignment(
+                        task = task,
+                        providerId = "gemini",
+                        modelName = "gemini-2.0-flash",
+                        level = AILevel.LIGHT,
+                        recommendationReason = "Baixíssima latência para consultas instantâneas e comandos diretos."
+                    )
+                    openai != null -> TaskAssignment(
+                        task = task,
+                        providerId = "openai",
+                        modelName = "gpt-4o-mini",
+                        level = AILevel.LIGHT,
+                        recommendationReason = "Respostas curtas e rápidas para dúvidas pontuais."
+                    )
+                    else -> TaskAssignment(
+                        task = task,
+                        providerId = claude?.id ?: "gemini",
+                        modelName = "claude-3-5-haiku-20241022",
+                        level = AILevel.LIGHT,
+                        recommendationReason = "Alta velocidade para consultas diretas."
+                    )
+                }
             }
             ModelTask.CODING -> {
-                val claude = availableProviders.find { it.id == "claude" }
-                val openai = availableProviders.find { it.id == "openai" }
                 when {
                     claude != null -> TaskAssignment(
                         task = task,
                         providerId = "claude",
-                        modelName = "claude-3-5-sonnet",
+                        modelName = "claude-3-5-sonnet-20241022",
                         level = AILevel.HIGH,
                         recommendationReason = "Agente de Programação: líder em engenharia de software, código limpo e depuração."
                     )
@@ -91,15 +107,13 @@ object QuestionnaireEngine {
                     else -> TaskAssignment(
                         task = task,
                         providerId = "gemini",
-                        modelName = "gemini-1.5-pro",
+                        modelName = "gemini-2.0-flash",
                         level = AILevel.HIGH,
                         recommendationReason = "Agente de Programação: capacidade analítica avançada para arquitetura de software."
                     )
                 }
             }
             ModelTask.COMPLEX_REASONING -> {
-                val openai = availableProviders.find { it.id == "openai" }
-                val gemini = availableProviders.find { it.id == "gemini" }
                 when {
                     openai != null -> TaskAssignment(
                         task = task,
@@ -111,74 +125,116 @@ object QuestionnaireEngine {
                     gemini != null -> TaskAssignment(
                         task = task,
                         providerId = "gemini",
-                        modelName = "gemini-1.5-pro",
+                        modelName = "gemini-2.0-flash",
                         level = AILevel.HIGH,
                         recommendationReason = "Agente Analítico: raciocínio multifacetado com contextualização profunda."
                     )
                     else -> TaskAssignment(
                         task = task,
                         providerId = "claude",
-                        modelName = "claude-3-5-sonnet",
+                        modelName = "claude-3-5-sonnet-20241022",
                         level = AILevel.HIGH,
                         recommendationReason = "Agente Analítico: profundidade analítica para problemas complexos e deduções lógicas."
                     )
                 }
             }
             ModelTask.RESEARCH -> {
-                TaskAssignment(
-                    task = task,
-                    providerId = "gemini",
-                    modelName = "gemini-2.0-flash",
-                    level = AILevel.MEDIUM,
-                    recommendationReason = "Agente de Pesquisa: janela de contexto ampla para síntese e investigação de tópicos densos."
-                )
-            }
-            ModelTask.CREATIVE_WRITING -> {
-                val claude = availableProviders.find { it.id == "claude" }
-                if (claude != null) {
-                    TaskAssignment(
+                when {
+                    gemini != null -> TaskAssignment(
+                        task = task,
+                        providerId = "gemini",
+                        modelName = "gemini-2.0-flash",
+                        level = AILevel.MEDIUM,
+                        recommendationReason = "Agente de Pesquisa: janela de contexto ampla para síntese e investigação de tópicos densos."
+                    )
+                    claude != null -> TaskAssignment(
                         task = task,
                         providerId = "claude",
-                        modelName = "claude-3-5-sonnet",
+                        modelName = "claude-3-5-sonnet-20241022",
+                        level = AILevel.MEDIUM,
+                        recommendationReason = "Agente de Pesquisa: síntese abrangente e análise comparativa de fontes."
+                    )
+                    else -> TaskAssignment(
+                        task = task,
+                        providerId = "openai",
+                        modelName = "gpt-4o",
+                        level = AILevel.MEDIUM,
+                        recommendationReason = "Agente de Pesquisa: extração de dados e síntese de informações."
+                    )
+                }
+            }
+            ModelTask.CREATIVE_WRITING -> {
+                when {
+                    claude != null -> TaskAssignment(
+                        task = task,
+                        providerId = "claude",
+                        modelName = "claude-3-5-sonnet-20241022",
                         level = AILevel.MEDIUM,
                         recommendationReason = "Agente Criativo: refinamento estilístico superior, vocabulário rico e prosa expressiva."
                     )
-                } else {
-                    TaskAssignment(
+                    gemini != null -> TaskAssignment(
                         task = task,
                         providerId = "gemini",
                         modelName = "gemini-2.0-flash",
                         level = AILevel.MEDIUM,
                         recommendationReason = "Agente Criativo: geração dinâmica de textos, roteiros e redação publicitária."
                     )
+                    else -> TaskAssignment(
+                        task = task,
+                        providerId = "openai",
+                        modelName = "gpt-4o",
+                        level = AILevel.MEDIUM,
+                        recommendationReason = "Agente Criativo: composição criativa e fluência expressiva."
+                    )
                 }
             }
             ModelTask.IMAGE_ANALYSIS -> {
-                TaskAssignment(
-                    task = task,
-                    providerId = "gemini",
-                    modelName = "gemini-2.0-flash",
-                    level = AILevel.HIGH,
-                    recommendationReason = "Processamento multimodal nativo com alta sensibilidade para identificação visual e OCR."
-                )
-            }
-            ModelTask.DOCUMENT_ANALYSIS -> {
-                val gemini = availableProviders.find { it.id == "gemini" }
-                if (gemini != null) {
-                    TaskAssignment(
+                when {
+                    gemini != null -> TaskAssignment(
                         task = task,
                         providerId = "gemini",
-                        modelName = "gemini-1.5-pro",
+                        modelName = "gemini-2.0-flash",
+                        level = AILevel.HIGH,
+                        recommendationReason = "Processamento multimodal nativo com alta sensibilidade para identificação visual e OCR."
+                    )
+                    openai != null -> TaskAssignment(
+                        task = task,
+                        providerId = "openai",
+                        modelName = "gpt-4o",
+                        level = AILevel.HIGH,
+                        recommendationReason = "Visão computacional e descrição detalhada de imagens."
+                    )
+                    else -> TaskAssignment(
+                        task = task,
+                        providerId = "claude",
+                        modelName = "claude-3-5-sonnet-20241022",
+                        level = AILevel.HIGH,
+                        recommendationReason = "Análise estruturada de conteúdo visual e diagramas."
+                    )
+                }
+            }
+            ModelTask.DOCUMENT_ANALYSIS -> {
+                when {
+                    gemini != null -> TaskAssignment(
+                        task = task,
+                        providerId = "gemini",
+                        modelName = "gemini-2.0-flash",
                         level = AILevel.HIGH,
                         recommendationReason = "Excelente compreensão de documentos extensos, relatórios e tabelas."
                     )
-                } else {
-                    TaskAssignment(
+                    openai != null -> TaskAssignment(
                         task = task,
                         providerId = "openai",
                         modelName = "gpt-4o",
                         level = AILevel.HIGH,
                         recommendationReason = "Capacidade consistente de leitura e extração estruturada de dados."
+                    )
+                    else -> TaskAssignment(
+                        task = task,
+                        providerId = "claude",
+                        modelName = "claude-3-5-sonnet-20241022",
+                        level = AILevel.HIGH,
+                        recommendationReason = "Leitura e síntese detalhada de textos densos."
                     )
                 }
             }

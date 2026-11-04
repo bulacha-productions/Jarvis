@@ -30,9 +30,12 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
@@ -93,6 +96,8 @@ fun SettingsScreen(
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val isMultiAgentEnabled by viewModel.isMultiAgentEnabled.collectAsState()
     val aiLevel by viewModel.aiLevel.collectAsState()
+    val manualProviderOverride by viewModel.manualProviderOverride.collectAsState()
+    val enabledProviders by viewModel.enabledProviders.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
 
     var showKeyForProviderId by remember { mutableStateOf<String?>(null) }
@@ -109,7 +114,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "v2.0.0",
+                                text = "v2.0.1",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = ElectricOrange,
@@ -137,10 +142,11 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
             contentPadding = PaddingValues(vertical = 16.dp)
         ) {
-            // SEÇÃO 1: SISTEMA MULTIAGENTE V2
+            // SEÇÃO 1: SISTEMA MULTIAGENTE V2.0.1
             item {
-                SectionHeader(title = "SISTEMA MULTIAGENTE (V2.0.0)", icon = Icons.Default.Psychology)
+                SectionHeader(title = "SISTEMA MULTIAGENTE (V2.0.1)", icon = Icons.Default.Psychology)
             }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -163,7 +169,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = if (isMultiAgentEnabled) "Ativo: Tarefas complexas são decompostas entre agentes especializados" else "Desativado: Execução padrão direta",
+                                    text = if (isMultiAgentEnabled) "Ativo: Decomposição por especialistas com síntese final obrigatória pelo Jarvis Central" else "Desativado: Execução padrão direta",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (isMultiAgentEnabled) ElectricOrange else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -184,7 +190,6 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )
-
                         AgentPillRow("⚡ Jarvis Central", "Orquestração & Síntese Final", ElectricOrange)
                         AgentPillRow("💻 Programador", "Engenharia de Software, Código & Debug", Color(0xFF4FC3F7))
                         AgentPillRow("🔍 Pesquisador", "Investigação Factual & Síntese Analítica", Color(0xFF81C784))
@@ -198,13 +203,15 @@ fun SettingsScreen(
             item {
                 SectionHeader(title = "PROVEDORES DE IA & APIS", icon = Icons.Default.Key)
             }
+
             item {
                 Text(
-                    text = "As credenciais são protegidas com criptografia de hardware via Android Keystore (AES256).",
+                    text = "As credenciais são protegidas com criptografia de hardware via Android Keystore (AES-256 GCM sem armazenamento em texto puro).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     settingsState.providers.forEach { provider ->
@@ -258,10 +265,91 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 3: QUESTIONÁRIO DE MODELOS
+            // SEÇÃO 3: ROTEAMENTO MANUAL DE PROVEDOR
+            item {
+                SectionHeader(title = "ROTEAMENTO MANUAL (DIRETO)", icon = Icons.Default.Route)
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Forçar Provedor Específico",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Permite fixar o processamento em um provedor ou deixar o Jarvis orquestrar automaticamente.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        val routingOptions = listOf(
+                            null to "Automático (Orquestrador Jarvis Multiagente)",
+                            "gemini" to "Google Gemini (Exclusivo)",
+                            "openai" to "OpenAI (Exclusivo)",
+                            "claude" to "Anthropic Claude (Exclusivo)"
+                        )
+
+                        routingOptions.forEach { (provId, label) ->
+                            val isSelected = manualProviderOverride == provId
+                            val isProvDisabled = provId != null && !enabledProviders.contains(provId)
+
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { viewModel.setManualProvider(provId) },
+                                color = if (isSelected) ElectricOrange.copy(alpha = 0.15f) else Color.Transparent,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    if (isSelected) 1.5.dp else 0.5.dp,
+                                    if (isSelected) ElectricOrange else MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = { viewModel.setManualProvider(provId) },
+                                        colors = RadioButtonDefaults.colors(selectedColor = ElectricOrange)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (isProvDisabled) {
+                                            Text(
+                                                text = "Aviso: Provedor desativado nas opções acima",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFEF5350)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // SEÇÃO 4: QUESTIONÁRIO DE MODELOS
             item {
                 SectionHeader(title = "DISTRIBUIÇÃO INTELIGENTE DE MODELOS", icon = Icons.Default.Tune)
             }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -296,10 +384,11 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 4: NÍVEL GLOBAL PADRÃO
+            // SEÇÃO 5: NÍVEL GLOBAL PADRÃO
             item {
                 SectionHeader(title = "NÍVEL GLOBAL PADRÃO", icon = Icons.Default.Speed)
             }
+
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     AILevel.values().forEach { level ->
@@ -348,10 +437,59 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 5: APARÊNCIA
+            // SEÇÃO 6: DIAGNÓSTICO DO SISTEMA
+            item {
+                SectionHeader(title = "DIAGNÓSTICO E SEGURANÇA", icon = Icons.Default.Security)
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Diagnóstico do Sistema Jarvis v2.0.1",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        DiagnosticRow(
+                            label = "Keystore Criptográfico (AES-256)",
+                            status = if (settingsState.keystoreHealthy) "Ativo & Saudável" else "Atenção",
+                            isSuccess = settingsState.keystoreHealthy
+                        )
+
+                        DiagnosticRow(
+                            label = "Provedores Habilitados",
+                            status = enabledProviders.joinToString(", ") { it.uppercase() }.ifEmpty { "Nenhum" },
+                            isSuccess = enabledProviders.isNotEmpty()
+                        )
+
+                        DiagnosticRow(
+                            label = "Roteamento Manual",
+                            status = manualProviderOverride?.uppercase() ?: "AUTOMÁTICO (MULTIAGENTE)",
+                            isSuccess = true
+                        )
+
+                        DiagnosticRow(
+                            label = "Backup de Aplicação",
+                            status = "Desativado (Proteção Anti-Vazamento)",
+                            isSuccess = true
+                        )
+                    }
+                }
+            }
+
+            // SEÇÃO 7: APARÊNCIA
             item {
                 SectionHeader(title = "APARÊNCIA", icon = Icons.Default.Palette)
             }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -385,10 +523,11 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO 6: SOBRE
+            // SEÇÃO 8: SOBRE
             item {
                 SectionHeader(title = "SOBRE O JARVIS", icon = Icons.Default.Info)
             }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -407,13 +546,13 @@ fun SettingsScreen(
                             Column {
                                 Text(text = "Jarvis Assistant", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = "Versão 2.0.0 (Build Code: 4)",
+                                    text = "Versão 2.0.1 (Build Code: 5)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ElectricOrange,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Nativo Kotlin • Jetpack Compose • Multiagente • Room 2.6.1",
+                                    text = "Nativo Kotlin • Jetpack Compose • Multiagente V2.0.1 • Room 2.6.1 • Keystore AES-256",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -445,6 +584,31 @@ fun SettingsScreen(
                 viewModel.addCustomModel(provider.id, id, name, lvl, caps)
                 providerToAddModel = null
             }
+        )
+    }
+}
+
+@Composable
+private fun DiagnosticRow(label: String, status: String, isSuccess: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = if (isSuccess) Color(0xFF4CAF50) else Color(0xFFEF5350)
         )
     }
 }
@@ -485,7 +649,8 @@ private fun AgentPillRow(title: String, desc: String, badgeColor: Color) {
 private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(top = 8.dp)
     ) {
         Icon(icon, contentDescription = null, tint = ElectricOrange, modifier = Modifier.size(18.dp))
         Text(
@@ -513,9 +678,7 @@ private fun ProviderCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
@@ -533,13 +696,13 @@ private fun ProviderCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(12.dp)
                             .clip(CircleShape)
                             .background(
                                 when (provider.status) {
                                     ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
-                                    ProviderStatus.TESTING -> Color(0xFFFFB300)
-                                    ProviderStatus.ERROR -> Color(0xFFE53935)
+                                    ProviderStatus.TESTING -> Color(0xFFFFA000)
+                                    ProviderStatus.ERROR -> Color(0xFFEF5350)
                                     ProviderStatus.UNCONFIGURED -> Color.Gray
                                 }
                             )

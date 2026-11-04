@@ -6,9 +6,9 @@ import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Message
-import com.jarvis.assistant.domain.model.TaskAssignment
 import com.jarvis.assistant.repositories.ChatRepository
 import com.jarvis.assistant.router.JarvisRouter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +26,7 @@ data class ChatUiState(
     val perMessageCapacity: AILevel? = null,
     val isPlusMenuOpen: Boolean = false,
     val isCapacitySubmenuOpen: Boolean = false,
-    val activeProviderName: String = "Jarvis Neural Core V2"
+    val activeProviderName: String = "Jarvis Neural Core V2.0.1"
 )
 
 class ChatViewModel(
@@ -46,6 +46,7 @@ class ChatViewModel(
         if (conversationId != null && conversationId == current && messagesJob?.isActive == true) {
             return
         }
+
         if (conversationId == null) {
             if (current == null) {
                 startNewChat()
@@ -153,6 +154,9 @@ class ChatViewModel(
 
             val taskAssignments = preferencesManager.taskAssignments.firstOrNull() ?: emptyMap()
             val isMultiAgent = preferencesManager.isMultiAgentEnabled.firstOrNull() ?: true
+            val enabledProviders = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude")
+            val manualOverride = preferencesManager.manualProviderOverride.firstOrNull()
+
             val history = _uiState.value.messages
             val responseBuilder = StringBuilder()
 
@@ -163,7 +167,9 @@ class ChatViewModel(
                     attachment = attachment,
                     overrideLevel = overrideCapacity,
                     taskAssignments = taskAssignments,
-                    isMultiAgentEnabled = isMultiAgent
+                    enabledProviderIds = enabledProviders,
+                    isMultiAgentEnabled = isMultiAgent,
+                    manualProviderId = manualOverride
                 ).collect { chunk ->
                     responseBuilder.append(chunk)
                 }
@@ -172,6 +178,9 @@ class ChatViewModel(
                     "Nenhuma resposta foi gerada pelo modelo selecionado."
                 }
                 repository.saveAssistantMessage(convId, finalResponse)
+            } catch (e: CancellationException) {
+                // Cancelamento deliberado via cancelActiveRequest().
+                // NÃO salva mensagem de erro duplicada para evitar poluir a conversa.
             } catch (e: Exception) {
                 repository.saveAssistantMessage(
                     convId,

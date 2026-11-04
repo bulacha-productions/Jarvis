@@ -19,7 +19,9 @@ class JarvisRouter(
         attachment: Attachment?,
         overrideLevel: AILevel?,
         taskAssignments: Map<String, TaskAssignment>,
-        isMultiAgentEnabled: Boolean = true
+        enabledProviderIds: Set<String>,
+        isMultiAgentEnabled: Boolean = true,
+        manualProviderId: String? = null
     ): Flow<String> {
         return orchestrator.orchestrate(
             prompt = prompt,
@@ -27,7 +29,9 @@ class JarvisRouter(
             attachment = attachment,
             overrideLevel = overrideLevel,
             taskAssignments = taskAssignments,
-            isMultiAgentEnabled = isMultiAgentEnabled
+            enabledProviderIds = enabledProviderIds,
+            isMultiAgentEnabled = isMultiAgentEnabled,
+            manualProviderId = manualProviderId
         )
     }
 }

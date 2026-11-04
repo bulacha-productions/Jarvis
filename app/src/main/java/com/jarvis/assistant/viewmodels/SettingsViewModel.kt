@@ -16,13 +16,12 @@ import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.ModelCapability
-import com.jarvis.assistant.domain.model.ModelTask
 import com.jarvis.assistant.domain.model.TaskAssignment
-import com.jarvis.assistant.router.QuestionnaireEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,7 +31,9 @@ data class SettingsUiState(
     val testResultMessage: String? = null,
     val lastTestSuccess: Boolean? = null,
     val isWizardOpen: Boolean = false,
-    val taskAssignments: Map<String, TaskAssignment> = emptyMap()
+    val taskAssignments: Map<String, TaskAssignment> = emptyMap(),
+    val isDiagnosticsOpen: Boolean = false,
+    val keystoreHealthy: Boolean = true
 )
 
 class SettingsViewModel(
@@ -65,6 +66,18 @@ class SettingsViewModel(
         initialValue = emptyMap()
     )
 
+    val manualProviderOverride = preferencesManager.manualProviderOverride.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = null
+    )
+
+    val enabledProviders = preferencesManager.enabledProviders.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = setOf("gemini", "openai", "claude")
+    )
+
     private val _settingsState = MutableStateFlow(SettingsUiState())
     val settingsState: StateFlow<SettingsUiState> = _settingsState.asStateFlow()
 
@@ -77,10 +90,11 @@ class SettingsViewModel(
             val geminiKey = secureKeyStore.getApiKey("gemini")
             val openaiKey = secureKeyStore.getApiKey("openai")
             val claudeKey = secureKeyStore.getApiKey("claude")
+            val enabledSet = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude")
 
-            val geminiProvider = GeminiProvider(context) { geminiKey }
-            val openaiProvider = OpenAIProvider(context, { openaiKey }, { "" })
-            val claudeProvider = ClaudeProvider { claudeKey }
+            val geminiProvider = GeminiProvider(context) { secureKeyStore.getApiKey("gemini") }
+            val openaiProvider = OpenAIProvider(context, { secureKeyStore.getApiKey("openai") }, { "" })
+            val claudeProvider = ClaudeProvider { secureKeyStore.getApiKey("claude") }
 
             val geminiModels = geminiProvider.getAvailableModels(AILevel.MEDIUM) +
                     geminiProvider.getAvailableModels(AILevel.LIGHT) +
@@ -100,7 +114,7 @@ class SettingsViewModel(
                     type = ProviderType.GEMINI,
                     displayName = "Google Gemini",
                     apiKey = geminiKey,
-                    isEnabled = true,
+                    isEnabled = enabledSet.contains("gemini"),
                     availableModels = geminiModels.distinctBy { it.id },
                     selectedModel = "gemini-2.0-flash",
                     status = if (geminiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
@@ -110,7 +124,7 @@ class SettingsViewModel(
                     type = ProviderType.OPENAI,
                     displayName = "OpenAI",
                     apiKey = openaiKey,
-                    isEnabled = openaiKey.isNotBlank(),
+                    isEnabled = enabledSet.contains("openai"),
                     availableModels = openaiModels.distinctBy { it.id },
                     selectedModel = "gpt-4o",
                     status = if (openaiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
@@ -120,14 +134,17 @@ class SettingsViewModel(
                     type = ProviderType.CLAUDE,
                     displayName = "Anthropic Claude",
                     apiKey = claudeKey,
-                    isEnabled = claudeKey.isNotBlank(),
+                    isEnabled = enabledSet.contains("claude"),
                     availableModels = claudeModels.distinctBy { it.id },
-                    selectedModel = "claude-3-5-sonnet",
+                    selectedModel = "claude-3-5-sonnet-20241022",
                     status = if (claudeKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 )
             )
 
-            _settingsState.value = _settingsState.value.copy(providers = list)
+            _settingsState.value = _settingsState.value.copy(
+                providers = list,
+                keystoreHealthy = secureKeyStore.isKeystoreFunctional()
+            )
         }
     }
 
@@ -155,10 +172,26 @@ class SettingsViewModel(
     }
 
     fun toggleProviderEnabled(providerId: String, isEnabled: Boolean) {
-        val updated = _settingsState.value.providers.map {
-            if (it.id == providerId) it.copy(isEnabled = isEnabled) else it
+        viewModelScope.launch {
+            preferencesManager.setProviderEnabled(providerId, isEnabled)
+            val updated = _settingsState.value.providers.map {
+                if (it.id == providerId) it.copy(isEnabled = isEnabled) else it
+            }
+            _settingsState.value = _settingsState.value.copy(providers = updated)
         }
-        _settingsState.value = _settingsState.value.copy(providers = updated)
+    }
+
+    fun setManualProvider(providerId: String?) {
+        viewModelScope.launch {
+            preferencesManager.setManualProvider(providerId)
+        }
+    }
+
+    fun toggleDiagnostics(isOpen: Boolean) {
+        _settingsState.value = _settingsState.value.copy(
+            isDiagnosticsOpen = isOpen,
+            keystoreHealthy = secureKeyStore.isKeystoreFunctional()
+        )
     }
 
     fun testConnection(providerId: String) {
@@ -187,6 +220,7 @@ class SettingsViewModel(
             }
 
             val testResult: ConnectionTestResult = providerInstance.testConnection(providerConfig.apiKey, providerConfig.baseUrl)
+
             if (testResult.isSuccess) {
                 val updatedModels = if (testResult.discoveredModels.isNotEmpty()) {
                     testResult.discoveredModels

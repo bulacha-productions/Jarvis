@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.ModelTask
@@ -18,8 +19,10 @@ class UserPreferencesManager(private val context: Context) {
 
     private val KEY_DARK_THEME = booleanPreferencesKey("pref_dark_theme")
     private val KEY_AI_LEVEL = stringPreferencesKey("pref_ai_level")
-    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v2")
-    private val KEY_MULTI_AGENT_ENABLED = booleanPreferencesKey("pref_multi_agent_enabled_v2")
+    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v2_0_1")
+    private val KEY_MULTI_AGENT_ENABLED = booleanPreferencesKey("pref_multi_agent_enabled_v2_0_1")
+    private val KEY_ENABLED_PROVIDERS = stringSetPreferencesKey("pref_enabled_providers_v2_0_1")
+    private val KEY_MANUAL_PROVIDER = stringPreferencesKey("pref_manual_provider_v2_0_1")
 
     val isDarkTheme: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_DARK_THEME] ?: true
@@ -27,6 +30,14 @@ class UserPreferencesManager(private val context: Context) {
 
     val isMultiAgentEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_MULTI_AGENT_ENABLED] ?: true
+    }
+
+    val manualProviderOverride: Flow<String?> = context.dataStore.data.map { preferences ->
+        preferences[KEY_MANUAL_PROVIDER]
+    }
+
+    val enabledProviders: Flow<Set<String>> = context.dataStore.data.map { preferences ->
+        preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude")
     }
 
     val aiLevel: Flow<AILevel> = context.dataStore.data.map { preferences ->
@@ -56,6 +67,28 @@ class UserPreferencesManager(private val context: Context) {
     suspend fun setMultiAgentEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEY_MULTI_AGENT_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setManualProvider(providerId: String?) {
+        context.dataStore.edit { preferences ->
+            if (providerId.isNullOrBlank() || providerId == "auto") {
+                preferences.remove(KEY_MANUAL_PROVIDER)
+            } else {
+                preferences[KEY_MANUAL_PROVIDER] = providerId
+            }
+        }
+    }
+
+    suspend fun setProviderEnabled(providerId: String, isEnabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude")
+            val updated = if (isEnabled) {
+                current + providerId
+            } else {
+                current - providerId
+            }
+            preferences[KEY_ENABLED_PROVIDERS] = updated
         }
     }
 
@@ -93,11 +126,9 @@ class UserPreferencesManager(private val context: Context) {
                 val providerId = obj.getString("providerId")
                 var modelName = obj.getString("modelName")
 
-                // Auto-migração transparente de identificadores 404 antigos
-                if (modelName == "gemini-2.5-flash") {
+                // Remove completamente qualquer referência a gemini-1.5 e gemini-2.5
+                if (modelName.contains("gemini-1.5") || modelName.contains("gemini-2.5")) {
                     modelName = "gemini-2.0-flash"
-                } else if (modelName == "gemini-2.5-pro") {
-                    modelName = "gemini-1.5-pro"
                 }
 
                 val level = try { AILevel.valueOf(obj.getString("level")) } catch (_: Exception) { AILevel.MEDIUM }
@@ -117,11 +148,11 @@ class UserPreferencesManager(private val context: Context) {
             "Padrão do Jarvis Central com alta velocidade e naturalidade."
         )
         map[ModelTask.QUICK_QUESTIONS.id] = TaskAssignment(
-            ModelTask.QUICK_QUESTIONS, "gemini", "gemini-1.5-flash", AILevel.LIGHT,
+            ModelTask.QUICK_QUESTIONS, "gemini", "gemini-2.0-flash", AILevel.LIGHT,
             "Baixa latência para perguntas diretas e comandos instantâneos."
         )
         map[ModelTask.CODING.id] = TaskAssignment(
-            ModelTask.CODING, "claude", "claude-3-5-sonnet", AILevel.HIGH,
+            ModelTask.CODING, "claude", "claude-3-5-sonnet-20241022", AILevel.HIGH,
             "Agente de Programação: alta precisão técnica e depuração robusta."
         )
         map[ModelTask.COMPLEX_REASONING.id] = TaskAssignment(
@@ -133,7 +164,7 @@ class UserPreferencesManager(private val context: Context) {
             "Agente de Pesquisa: síntese ampla e investigação comparativa."
         )
         map[ModelTask.CREATIVE_WRITING.id] = TaskAssignment(
-            ModelTask.CREATIVE_WRITING, "claude", "claude-3-5-sonnet", AILevel.MEDIUM,
+            ModelTask.CREATIVE_WRITING, "claude", "claude-3-5-sonnet-20241022", AILevel.MEDIUM,
             "Agente Criativo: estilo narrativo refinado e ideação expressiva."
         )
         map[ModelTask.IMAGE_ANALYSIS.id] = TaskAssignment(
@@ -141,8 +172,8 @@ class UserPreferencesManager(private val context: Context) {
             "Visão computacional e OCR nativo com alta sensibilidade visual."
         )
         map[ModelTask.DOCUMENT_ANALYSIS.id] = TaskAssignment(
-            ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-1.5-pro", AILevel.HIGH,
-            "Janela de contexto longa para análise aprofundada de PDFs e relatórios."
+            ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-2.0-flash", AILevel.HIGH,
+            "Janela de contexto longa para análise aprofundada de documentos e relatórios."
         )
         return map
     }
