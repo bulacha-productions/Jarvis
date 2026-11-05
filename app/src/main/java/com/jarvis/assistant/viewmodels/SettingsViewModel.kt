@@ -10,6 +10,7 @@ import com.jarvis.assistant.ai.ConnectionTestResult
 import com.jarvis.assistant.ai.GeminiProvider
 import com.jarvis.assistant.ai.OpenAIProvider
 import com.jarvis.assistant.ai.OpenRouterProvider
+import com.jarvis.assistant.ai.MockSystemProvider
 import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
@@ -250,6 +251,7 @@ class SettingsViewModel(
                 ProviderType.OPENAI -> OpenAIProvider(context, { providerConfig.apiKey }, { providerConfig.baseUrl })
                 ProviderType.CLAUDE -> ClaudeProvider(context) { providerConfig.apiKey }
                 ProviderType.OPENROUTER -> OpenRouterProvider(context) { providerConfig.apiKey }
+                ProviderType.MOCK, ProviderType.CUSTOM -> MockSystemProvider()
             }
 
             val testResult: ConnectionTestResult = providerInstance.testConnection(providerConfig.apiKey, providerConfig.baseUrl)
