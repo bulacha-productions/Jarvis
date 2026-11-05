@@ -37,6 +37,7 @@ import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Message
 import com.jarvis.assistant.ui.components.JarvisMascot
+import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.viewmodels.ChatViewModel
 import java.io.File
@@ -187,7 +188,7 @@ fun ChatScreen(
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        text = "v1.1.1",
+                                        text = "v${JarvisVersion.VERSION_NAME}",
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = ElectricOrange,

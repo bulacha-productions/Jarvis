@@ -10,21 +10,20 @@ enum class ProviderType(val displayName: String) {
     GEMINI("Google Gemini"),
     OPENAI("OpenAI"),
     CLAUDE("Anthropic Claude"),
-    CUSTOM("Provedor Personalizado (OpenAI Compatível)"),
-    MOCK("Jarvis Core (Offline)")
+    OPENROUTER("OpenRouter")
 }
 
 enum class ProviderStatus {
-    UNCONFIGURED,
     CONNECTED,
     TESTING,
-    ERROR
+    ERROR,
+    UNCONFIGURED
 }
 
 data class ConnectionTestResult(
     val isSuccess: Boolean,
-    val statusCode: Int? = null,
-    val message: String,
+    val statusCode: Int = 0,
+    val message: String = "",
     val discoveredModels: List<AIModelInfo> = emptyList()
 )
 
@@ -32,9 +31,9 @@ data class AIProviderConfig(
     val id: String,
     val type: ProviderType,
     val displayName: String,
-    val apiKey: String = "",
-    val baseUrl: String = "",
+    val apiKey: String,
     val isEnabled: Boolean = true,
+    val baseUrl: String = "",
     val availableModels: List<AIModelInfo> = emptyList(),
     val selectedModel: String = "",
     val status: ProviderStatus = ProviderStatus.UNCONFIGURED,
@@ -50,7 +49,6 @@ interface AIProvider {
     suspend fun testConnection(apiKey: String, baseUrl: String = ""): ConnectionTestResult
     suspend fun queryRemoteModels(apiKey: String, baseUrl: String = ""): Result<List<AIModelInfo>>
     suspend fun getAvailableModels(level: AILevel): List<AIModelInfo>
-
     fun generateStreamResponse(
         prompt: String,
         history: List<Message>,

@@ -12,6 +12,7 @@ import androidx.navigation.compose.rememberNavController
 import com.jarvis.assistant.ai.ClaudeProvider
 import com.jarvis.assistant.ai.GeminiProvider
 import com.jarvis.assistant.ai.OpenAIProvider
+import com.jarvis.assistant.ai.OpenRouterProvider
 import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.data.local.room.JarvisDatabase
@@ -29,17 +30,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Infraestrutura local e segurança
         val database = JarvisDatabase.getInstance(applicationContext)
         val preferencesManager = UserPreferencesManager(applicationContext)
         val secureKeyStore = SecureKeyStoreManager(applicationContext)
         val chatRepository = ChatRepository(database.conversationDao(), database.messageDao())
 
-        // Provedores de IA e Roteador Central
         val geminiProvider = GeminiProvider(applicationContext) { secureKeyStore.getApiKey("gemini") }
         val openaiProvider = OpenAIProvider(applicationContext, { secureKeyStore.getApiKey("openai") })
         val claudeProvider = ClaudeProvider(applicationContext) { secureKeyStore.getApiKey("claude") }
-        val router = JarvisRouter(listOf(geminiProvider, openaiProvider, claudeProvider))
+        val openRouterProvider = OpenRouterProvider(applicationContext) { secureKeyStore.getApiKey("openrouter") }
+
+        val router = JarvisRouter(listOf(geminiProvider, openaiProvider, claudeProvider, openRouterProvider))
 
         val chatViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

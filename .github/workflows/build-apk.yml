@@ -37,28 +37,25 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v2.0.1-apk
+        name: jarvis-v2.0.2-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v2.0.1-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v2.0.1 (Build ${{ github.run_number }})
+        tag_name: v2.0.2-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v2.0.2 (Build ${{ github.run_number }})
         body: |
-          ### 🤖 Jarvis Assistant v2.0.1 — Estabilidade, Segurança e Integração Multiagente
-          
-          **Destaques da Atualização (V2.0.1 - Build 5):**
-          - 🛠️ **Google Gemini 404 Zero:** Eliminação absoluta de referências obsoletas a `gemini-1.5`. Consulta dinâmica oficial via `models.list`, validação por `supportedGenerationMethods: ["generateContent"]` e stripping de prefixos `models/`.
-          - 🛡️ **Segurança sem Plaintext:** Criptografia de chaves exclusivamente via Android Keystore (AES-256 GCM) com migração automática e exclusão de arquivos legados. `android:allowBackup="false"` no `AndroidManifest.xml` para evitar corrupção de chaves.
-          - 🔀 **Isolamento de Provedores:** Respeito absoluto a `enabledProviders`. Se um provedor estiver desativado, nenhuma parte do app (roteador, questionário, multiagente, fallback) tenta chamá-lo.
-          - 🎯 **Roteamento Manual Estrito:** Seleção explícita de IA no painel sem substituição silenciosa e com diagnóstico claro.
-          - 🧠 **Multiagente com Síntese do Jarvis Central:** Decomposição em subtarefas especializadas e consolidação final mandatória pelo Coordenador Geral (`AgentRole.COORDINATOR`).
-          - 🔒 **Assinatura Determinística:** Keystore PKCS12 dedicado (`app/keystore/jarvis-release.jks`) garantindo atualização contínua sem erro de incompatibilidade de assinatura (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
-          - 🎙️ **Reconhecimento de Voz Aprimorado:** Configuração `pt-BR`, execução no Main Looper e encerramento limpo sem erros falso-positivos.
-          - 💾 **Persistência Segura (Room 2.6.1):** Remoção de migrações destrutivas para preservação perpétua das conversas.
-          - 🛑 **Cancelamento Limpo:** Isolamento de `CancellationException` evitando mensagens de erro espúrias no histórico.
+          ### 🤖 Jarvis Assistant v2.0.2 — Correção Definitiva de Modelos & Suporte OpenRouter
+
+          **Destaques da Atualização (V2.0.2 - Build 6):**
+          - 🌐 **Novo Provedor OpenRouter:** Suporte completo à API OpenRouter (`https://openrouter.ai/api/v1`) com verificação real via `/api/v1/auth/key`, descoberta dinâmica de modelos, suporte a modelos gratuitos (default: `meta-llama/llama-3.3-70b-instruct:free`), armazenamento seguro de chaves no Android Keystore e integração aos agentes.
+          - 🛠️ **Google Gemini 404 Definitivo:** Eliminação de regras que substituíam silenciosamente modelos escolhidos pelo usuário (como `gemini-2.5-flash`), suporte a fallback inteligente entre `v1beta` e `v1`, e extração cirúrgica do corpo JSON de erro da Google (`error.message`) com sanitização da chave de API.
+          - 🔍 **OpenAI & Claude Modernizados:** Descoberta dinâmica de modelos via `GET /v1/models`, cabeçalho `anthropic-version: 2023-06-01`, alternância estrita de mensagens iniciando por `user`, e extração fiel das mensagens de erro das APIs.
+          - 🎯 **Seleção Dinâmica de Modelo Ativo:** Interface renovada nos cards de provedores permitindo escolher o modelo ativo entre os disponíveis, com persistência no DataStore (`pref_selected_models_v2_0_2`) e propagação em cascata até os agentes e requisições HTTP.
+          - 🏷️ **Fonte Única de Versão:** Padronização absoluta via `JarvisVersion.kt` (`v2.0.2`, Build Code 6), eliminando o badge residual `v1.1.1` do cabeçalho de conversa.
+          - 🔒 **Preservação de Dados e Segurança:** Sem migração destrutiva do Room, manutenção do Keystore AES-256 e assinatura contínua com `jarvis-release.jks`.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

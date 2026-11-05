@@ -2,6 +2,7 @@ package com.jarvis.assistant.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.Attachment
@@ -26,7 +27,7 @@ data class ChatUiState(
     val perMessageCapacity: AILevel? = null,
     val isPlusMenuOpen: Boolean = false,
     val isCapacitySubmenuOpen: Boolean = false,
-    val activeProviderName: String = "Jarvis Neural Core V2.0.1"
+    val activeProviderName: String = "Jarvis Neural Core v${JarvisVersion.VERSION_NAME}"
 )
 
 class ChatViewModel(
@@ -149,15 +150,15 @@ class ChatViewModel(
                 isSending = true
             )
 
-            // Salva mensagem do usuário imediatamente no Room
             repository.saveUserMessage(convId, displayContent, attachment)
 
             val taskAssignments = preferencesManager.taskAssignments.firstOrNull() ?: emptyMap()
             val isMultiAgent = preferencesManager.isMultiAgentEnabled.firstOrNull() ?: true
-            val enabledProviders = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude")
+            val enabledProviders = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
             val manualOverride = preferencesManager.manualProviderOverride.firstOrNull()
-
+            val selectedModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
             val history = _uiState.value.messages
+
             val responseBuilder = StringBuilder()
 
             try {
@@ -169,7 +170,8 @@ class ChatViewModel(
                     taskAssignments = taskAssignments,
                     enabledProviderIds = enabledProviders,
                     isMultiAgentEnabled = isMultiAgent,
-                    manualProviderId = manualOverride
+                    manualProviderId = manualOverride,
+                    selectedModels = selectedModels
                 ).collect { chunk ->
                     responseBuilder.append(chunk)
                 }
@@ -179,8 +181,7 @@ class ChatViewModel(
                 }
                 repository.saveAssistantMessage(convId, finalResponse)
             } catch (e: CancellationException) {
-                // Cancelamento deliberado via cancelActiveRequest().
-                // NÃO salva mensagem de erro duplicada para evitar poluir a conversa.
+                // Cancelamento voluntário
             } catch (e: Exception) {
                 repository.saveAssistantMessage(
                     convId,

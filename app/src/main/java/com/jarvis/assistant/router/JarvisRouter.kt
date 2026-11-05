@@ -21,7 +21,8 @@ class JarvisRouter(
         taskAssignments: Map<String, TaskAssignment>,
         enabledProviderIds: Set<String>,
         isMultiAgentEnabled: Boolean = true,
-        manualProviderId: String? = null
+        manualProviderId: String? = null,
+        selectedModels: Map<String, String> = emptyMap()
     ): Flow<String> {
         return orchestrator.orchestrate(
             prompt = prompt,
@@ -31,7 +32,8 @@ class JarvisRouter(
             taskAssignments = taskAssignments,
             enabledProviderIds = enabledProviderIds,
             isMultiAgentEnabled = isMultiAgentEnabled,
-            manualProviderId = manualProviderId
+            manualProviderId = manualProviderId,
+            selectedModels = selectedModels
         )
     }
 }

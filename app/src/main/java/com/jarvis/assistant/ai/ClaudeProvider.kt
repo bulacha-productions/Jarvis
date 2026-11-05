@@ -1,8 +1,6 @@
 package com.jarvis.assistant.ai
 
 import android.content.Context
-import android.net.Uri
-import android.util.Base64
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.Attachment
@@ -19,233 +17,199 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.InputStream
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
 class ClaudeProvider(
     private val context: Context? = null,
-    private val apiKeyProvider: () -> String
+    private val apiKeyProvider: suspend () -> String
 ) : AIProvider {
-
-    constructor(apiKeyProvider: () -> String) : this(null, apiKeyProvider)
 
     override val id: String = "claude"
     override val type: ProviderType = ProviderType.CLAUDE
     override val displayName: String = "Anthropic Claude"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val defaultModels = listOf(
-        AIModelInfo(
-            id = "claude-3-5-sonnet-20241022",
-            displayName = "Claude 3.5 Sonnet",
-            providerId = id,
-            defaultLevel = AILevel.HIGH,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.CODING,
-                ModelCapability.REASONING,
-                ModelCapability.IMAGE_ANALYSIS,
-                ModelCapability.DOCUMENT_ANALYSIS,
-                ModelCapability.LONG_CONTEXT
-            ),
-            description = "Líder em engenharia de software, raciocínio aprofundado e código limpo."
-        ),
-        AIModelInfo(
-            id = "claude-3-5-haiku-20241022",
-            displayName = "Claude 3.5 Haiku",
-            providerId = id,
-            defaultLevel = AILevel.LIGHT,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.CODING,
-                ModelCapability.REASONING
-            ),
-            description = "Respostas ágeis com baixa latência e alta precisão sintática."
-        ),
-        AIModelInfo(
-            id = "claude-3-opus-20240229",
-            displayName = "Claude 3 Opus",
-            providerId = id,
-            defaultLevel = AILevel.HIGH,
-            capabilities = setOf(
-                ModelCapability.TEXT,
-                ModelCapability.REASONING,
-                ModelCapability.LONG_CONTEXT
-            ),
-            description = "Modelo denso para análise filosófica, jurídica e raciocínio complexo."
-        )
-    )
+    companion object {
+        const val BASE_URL = "https://api.anthropic.com/v1"
+        const val ANTHROPIC_VERSION = "2023-06-01"
+        const val DEFAULT_MODEL = "claude-3-5-sonnet-20241022"
 
-    override suspend fun isAvailable(): Boolean = apiKeyProvider().trim().isNotBlank()
+        fun extractErrorMessage(errorBody: String?, httpCode: Int): String {
+            if (errorBody.isNullOrBlank()) {
+                return when (httpCode) {
+                    401 -> "Chave Anthropic inválida ou não autorizada (HTTP 401)."
+                    403 -> "Acesso negado pela Anthropic (HTTP 403)."
+                    404 -> "Modelo Anthropic não encontrado (HTTP 404)."
+                    429 -> "Limite de cota/requisições excedido na Anthropic (HTTP 429)."
+                    500, 529 -> "Servidores Anthropic sobrecarregados ou indisponíveis (HTTP $httpCode)."
+                    else -> "Erro HTTP $httpCode na API Anthropic."
+                }
+            }
+            return try {
+                val json = JSONObject(errorBody)
+                val err = json.optJSONObject("error")
+                if (err != null) {
+                    err.optString("message", errorBody)
+                } else {
+                    errorBody.take(300)
+                }
+            } catch (e: Exception) {
+                errorBody.take(300)
+            }
+        }
+    }
+
+    override suspend fun isAvailable(): Boolean {
+        val key = apiKeyProvider()
+        return key.isNotBlank()
+    }
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
         val trimmedKey = apiKey.trim()
         if (trimmedKey.isBlank()) {
             return@withContext ConnectionTestResult(
                 isSuccess = false,
-                message = "A chave de API da Anthropic Claude não pode estar vazia."
+                statusCode = 0,
+                message = "Chave de API Anthropic Claude não configurada."
             )
         }
 
-        // Tenta listar modelos da Anthropic
-        val modelsUrl = "https://api.anthropic.com/v1/models"
+        val request = Request.Builder()
+            .url("$BASE_URL/models")
+            .header("x-api-key", trimmedKey)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .get()
+            .build()
+
         try {
-            val req = Request.Builder()
-                .url(modelsUrl)
-                .header("x-api-key", trimmedKey)
-                .header("anthropic-version", "2023-06-01")
-                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
-                .get()
-                .build()
-
-            client.newCall(req).execute().use { response ->
-                val code = response.code
-                val body = response.body?.string() ?: ""
-
-                when (code) {
-                    200 -> {
-                        val parsed = parseModelsFromJson(body)
-                        val finalModels = if (parsed.isNotEmpty()) parsed else defaultModels
-                        ConnectionTestResult(
-                            isSuccess = true,
-                            statusCode = 200,
-                            message = "Conexão com Anthropic Claude estabelecida com sucesso! (${finalModels.size} modelos identificados)",
-                            discoveredModels = finalModels
-                        )
-                    }
-                    401 -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = 401,
-                        message = "Erro 401: Chave de API da Anthropic Claude inválida ou não autorizada."
-                    )
-                    403 -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = 403,
-                        message = "Erro 403: Acesso negado pela Anthropic Claude."
-                    )
-                    429 -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = 429,
-                        message = "Erro 429: Limite de taxa ou créditos esgotados na Anthropic Claude."
-                    )
-                    else -> {
-                        // Fallback: ping em /messages se /models não for liberado na conta
-                        testPingMessages(trimmedKey)
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            testPingMessages(trimmedKey)
-        }
-    }
-
-    private fun testPingMessages(trimmedKey: String): ConnectionTestResult {
-        val url = "https://api.anthropic.com/v1/messages"
-        val payload = JSONObject().apply {
-            put("model", "claude-3-5-haiku-20241022")
-            put("max_tokens", 1)
-            put("messages", JSONArray().put(JSONObject().apply {
-                put("role", "user")
-                put("content", "ping")
-            }))
-        }
-
-        return try {
-            val request = Request.Builder()
-                .url(url)
-                .header("x-api-key", trimmedKey)
-                .header("anthropic-version", "2023-06-01")
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-
             client.newCall(request).execute().use { response ->
-                val code = response.code
-                when (code) {
-                    200 -> ConnectionTestResult(
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val models = parseModels(body)
+                    ConnectionTestResult(
                         isSuccess = true,
-                        statusCode = 200,
-                        message = "Conexão com Anthropic Claude estabelecida com sucesso!",
-                        discoveredModels = defaultModels
+                        statusCode = response.code,
+                        message = "Conexão com Anthropic Claude estabelecida com sucesso! ${models.size} modelos localizados.",
+                        discoveredModels = models
                     )
-                    401 -> ConnectionTestResult(
+                } else {
+                    val errorMsg = extractErrorMessage(body, response.code)
+                    ConnectionTestResult(
                         isSuccess = false,
-                        statusCode = 401,
-                        message = "Erro 401: Chave de API da Anthropic Claude inválida ou não autorizada."
-                    )
-                    403 -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = 403,
-                        message = "Erro 403: Acesso negado pela Anthropic Claude."
-                    )
-                    429 -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = 429,
-                        message = "Erro 429: Limite de taxa ou créditos esgotados na Anthropic Claude."
-                    )
-                    else -> ConnectionTestResult(
-                        isSuccess = false,
-                        statusCode = code,
-                        message = "Erro $code da Anthropic Claude: ${response.message}"
+                        statusCode = response.code,
+                        message = "Falha ao validar chave Claude (HTTP ${response.code}): $errorMsg"
                     )
                 }
             }
         } catch (e: Exception) {
             ConnectionTestResult(
                 isSuccess = false,
-                message = "Falha de conexão com Anthropic Claude: ${e.message ?: "Erro de rede"}"
+                statusCode = 0,
+                message = "Erro de conexão ao acessar a API Claude: ${e.message ?: "Conexão recusada"}"
             )
         }
     }
 
-    private fun parseModelsFromJson(body: String): List<AIModelInfo> {
-        return try {
-            val json = JSONObject(body)
-            val data = json.optJSONArray("data") ?: JSONArray()
-            val list = mutableListOf<AIModelInfo>()
-            for (i in 0 until data.length()) {
-                val obj = data.getJSONObject(i)
-                val id = obj.optString("id", "")
-                if (id.startsWith("claude")) {
-                    val isHaiku = id.contains("haiku")
-                    list.add(
-                        AIModelInfo(
-                            id = id,
-                            displayName = obj.optString("display_name", id),
-                            providerId = this.id,
-                            defaultLevel = if (isHaiku) AILevel.LIGHT else AILevel.HIGH,
-                            capabilities = setOf(
-                                ModelCapability.TEXT,
-                                ModelCapability.CODING,
-                                ModelCapability.REASONING,
-                                ModelCapability.IMAGE_ANALYSIS
-                            ),
-                            description = "Modelo oficial Claude disponível na sua conta."
-                        )
-                    )
+    override suspend fun queryRemoteModels(apiKey: String, baseUrl: String): Result<List<AIModelInfo>> = withContext(Dispatchers.IO) {
+        val trimmedKey = apiKey.trim()
+        val request = Request.Builder()
+            .url("$BASE_URL/models")
+            .header("x-api-key", trimmedKey)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .get()
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    val errorMsg = extractErrorMessage(body, response.code)
+                    return@withContext Result.failure(Exception("HTTP ${response.code}: $errorMsg"))
                 }
+                Result.success(parseModels(body))
             }
-            list
-        } catch (_: Exception) {
-            emptyList()
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
-    override suspend fun queryRemoteModels(apiKey: String, baseUrl: String): Result<List<AIModelInfo>> = withContext(Dispatchers.IO) {
-        val testRes = testConnection(apiKey, baseUrl)
-        if (testRes.isSuccess) {
-            Result.success(testRes.discoveredModels)
-        } else {
-            Result.failure(Exception(testRes.message))
+    private fun parseModels(body: String): List<AIModelInfo> {
+        val models = mutableListOf<AIModelInfo>()
+        try {
+            val root = JSONObject(body)
+            val data = root.optJSONArray("data") ?: JSONArray()
+            for (i in 0 until data.length()) {
+                val item = data.optJSONObject(i) ?: continue
+                val id = item.optString("id", "").trim()
+                if (id.isBlank()) continue
+
+                val displayName = item.optString("display_name", id)
+                val capabilities = mutableSetOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION)
+                if (id.contains("sonnet") || id.contains("opus")) {
+                    capabilities.add(ModelCapability.MULTI_AGENT_READY)
+                }
+
+                val level = when {
+                    id.contains("opus") || id.contains("sonnet") -> AILevel.POWERFUL
+                    id.contains("haiku") -> AILevel.FAST
+                    else -> AILevel.BALANCED
+                }
+
+                models.add(
+                    AIModelInfo(
+                        id = id,
+                        displayName = displayName,
+                        providerId = this.id,
+                        defaultLevel = level,
+                        capabilities = capabilities,
+                        description = "Modelo Anthropic ($id)"
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // Ignora falhas de parse
         }
+        return models.sortedWith(
+            compareByDescending<AIModelInfo> { it.id.contains("3-5-sonnet") }
+                .thenByDescending { it.id.contains("3-7-sonnet") }
+                .thenBy { it.displayName }
+        )
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
-        val filtered = defaultModels.filter { it.defaultLevel == level }
-        return if (filtered.isNotEmpty()) filtered else defaultModels
+        val key = apiKeyProvider()
+        if (key.isNotBlank()) {
+            val remote = queryRemoteModels(key).getOrNull()
+            if (!remote.isNullOrEmpty()) {
+                val filtered = remote.filter { it.defaultLevel == level }
+                return if (filtered.isNotEmpty()) filtered else remote
+            }
+        }
+        return listOf(
+            AIModelInfo(
+                id = "claude-3-5-sonnet-20241022",
+                displayName = "Claude 3.5 Sonnet",
+                providerId = id,
+                defaultLevel = AILevel.POWERFUL,
+                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                description = "Anthropic Claude 3.5 Sonnet de alta performance"
+            ),
+            AIModelInfo(
+                id = "claude-3-5-haiku-20241022",
+                displayName = "Claude 3.5 Haiku",
+                providerId = id,
+                defaultLevel = AILevel.FAST,
+                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION),
+                description = "Anthropic Claude 3.5 Haiku veloz"
+            )
+        )
     }
 
     override fun generateStreamResponse(
@@ -257,133 +221,90 @@ class ClaudeProvider(
     ): Flow<String> = flow {
         val key = apiKeyProvider().trim()
         if (key.isBlank()) {
-            emit("Chave de API Anthropic Claude não configurada nas Configurações.")
+            emit("Erro: Chave de API Anthropic Claude não configurada. Configure em Configurações > Provedores de IA.")
             return@flow
         }
 
-        val targetModel = if (modelName.isNotBlank()) {
-            // Normaliza nomes genéricos para identificadores completos aceitos pela API
-            if (modelName == "claude-3-5-sonnet") "claude-3-5-sonnet-20241022"
-            else if (modelName == "claude-3-5-haiku") "claude-3-5-haiku-20241022"
-            else if (modelName == "claude-3-opus") "claude-3-opus-20240229"
-            else modelName
-        } else when (level) {
-            AILevel.LIGHT -> "claude-3-5-haiku-20241022"
-            AILevel.MEDIUM -> "claude-3-5-sonnet-20241022"
-            AILevel.HIGH -> "claude-3-5-sonnet-20241022"
+        val resolvedModel = modelName.trim().ifBlank { DEFAULT_MODEL }
+
+        val messagesArray = JSONArray()
+        var lastRole: String? = null
+        for (msg in history.takeLast(16)) {
+            val role = if (msg.isUser) "user" else "assistant"
+            if (role != lastRole) {
+                val msgObj = JSONObject()
+                msgObj.put("role", role)
+                msgObj.put("content", msg.content)
+                messagesArray.put(msgObj)
+                lastRole = role
+            }
         }
 
-        val url = "https://api.anthropic.com/v1/messages"
+        if (lastRole == "user") {
+            val lastUser = messagesArray.getJSONObject(messagesArray.length() - 1)
+            val currentContent = lastUser.optString("content", "")
+            lastUser.put("content", "$currentContent\n\n$prompt")
+        } else {
+            val userMsg = JSONObject()
+            userMsg.put("role", "user")
+            userMsg.put("content", prompt)
+            messagesArray.put(userMsg)
+        }
+
+        val requestBodyJson = JSONObject()
+        requestBodyJson.put("model", resolvedModel)
+        requestBodyJson.put("max_tokens", 4096)
+        requestBodyJson.put("messages", messagesArray)
+        requestBodyJson.put("stream", true)
+
+        val body = requestBodyJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val request = Request.Builder()
+            .url("$BASE_URL/messages")
+            .header("x-api-key", key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .post(body)
+            .build()
 
         try {
-            val messagesArr = JSONArray()
-
-            // Regra Claude: strictly alternate between "user" and "assistant"
-            // Primeiro item DEVE ser "user"
-            var lastRole: String? = null
-            val sanitized = history.filter { it.content.isNotBlank() }.takeLast(8)
-
-            for (msg in sanitized) {
-                val currentRole = if (msg.isFromUser) "user" else "assistant"
-                if (messagesArr.length() == 0 && currentRole != "user") {
-                    continue
-                }
-                if (currentRole == lastRole) {
-                    continue
-                }
-
-                messagesArr.put(JSONObject().apply {
-                    put("role", currentRole)
-                    put("content", msg.content.trim())
-                })
-                lastRole = currentRole
-            }
-
-            // Mensagem atual do usuário
-            val userContent = if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true && attachment.mimeType?.startsWith("image/") == true) {
-                try {
-                    val uri = Uri.parse(attachment.uriString)
-                    val base64 = context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
-                        Base64.encodeToString(stream.readBytes(), Base64.NO_WRAP)
-                    }
-                    if (base64 != null) {
-                        val parts = JSONArray()
-                        parts.put(JSONObject().apply {
-                            put("type", "image")
-                            put("source", JSONObject().apply {
-                                put("type", "base64")
-                                put("media_type", attachment.mimeType ?: "image/jpeg")
-                                put("data", base64)
-                            })
-                        })
-                        parts.put(JSONObject().apply {
-                            put("type", "text")
-                            put("text", prompt.trim().ifBlank { "Analise esta imagem." })
-                        })
-                        parts
-                    } else {
-                        prompt.trim().ifBlank { "Olá" }
-                    }
-                } catch (_: Exception) {
-                    prompt.trim().ifBlank { "Olá" }
-                }
-            } else {
-                prompt.trim().ifBlank { "Olá" }
-            }
-
-            // Se o último papel for user, evita colisão
-            if (lastRole == "user" && messagesArr.length() > 0) {
-                messagesArr.remove(messagesArr.length() - 1)
-            }
-
-            messagesArr.put(JSONObject().apply {
-                put("role", "user")
-                put("content", userContent)
-            })
-
-            val payload = JSONObject().apply {
-                put("model", targetModel)
-                put("max_tokens", 4096)
-                put("messages", messagesArr)
-            }
-
-            val request = Request.Builder()
-                .url(url)
-                .header("x-api-key", key)
-                .header("anthropic-version", "2023-06-01")
-                .header("User-Agent", "Jarvis-Assistant-Android/2.0.1")
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-
             client.newCall(request).execute().use { response ->
-                val code = response.code
-                val body = response.body?.string() ?: ""
-
                 if (!response.isSuccessful) {
-                    when (code) {
-                        400 -> emit("Erro 400 no Claude: Parâmetros inválidos ou alternância de mensagens rejeitada.")
-                        401 -> emit("Erro 401 no Claude: Chave de API inválida ou expirada nas Configurações.")
-                        403 -> emit("Erro 403 no Claude: Acesso não autorizado ao modelo '$targetModel'.")
-                        404 -> emit("Erro 404 no Claude: Modelo '$targetModel' não encontrado.")
-                        429 -> emit("Erro 429 no Claude: Limite de cota atingido na Anthropic.")
-                        529, 500, 503 -> emit("Erro $code no Claude: Servidores da Anthropic sobrecarregados no momento.")
-                        else -> emit("Erro $code no Claude: ${response.message}")
-                    }
-                    return@use
+                    val errBody = response.body?.string() ?: ""
+                    val extracted = extractErrorMessage(errBody, response.code)
+                    emit("Erro Claude [HTTP ${response.code}]: $extracted")
+                    return@flow
                 }
 
-                val json = JSONObject(body)
-                val contentArr = json.optJSONArray("content")
-                val reply = contentArr?.optJSONObject(0)?.optString("text")
+                val responseBody = response.body ?: run {
+                    emit("Erro: Corpo de resposta Claude vazio.")
+                    return@flow
+                }
 
-                if (!reply.isNullOrBlank()) {
-                    emit(reply)
-                } else {
-                    emit("Claude processou a solicitação mas não retornou texto.")
+                val reader = BufferedReader(InputStreamReader(responseBody.byteStream(), Charsets.UTF_8))
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val currentLine = line ?: continue
+                    if (currentLine.startsWith("data: ")) {
+                        val data = currentLine.removePrefix("data: ").trim()
+                        if (data.isBlank()) continue
+                        try {
+                            val chunkJson = JSONObject(data)
+                            val type = chunkJson.optString("type")
+                            if (type == "content_block_delta") {
+                                val delta = chunkJson.optJSONObject("delta")
+                                val text = delta?.optString("text", "") ?: ""
+                                if (text.isNotEmpty()) {
+                                    emit(text)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Ignora frames malformados
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
-            emit("Falha na comunicação com Claude: ${e.message ?: "Erro desconhecido"}")
+            emit("Erro de conexão Claude: ${e.message ?: "Falha desconhecida"}")
         }
     }.flowOn(Dispatchers.IO)
 }

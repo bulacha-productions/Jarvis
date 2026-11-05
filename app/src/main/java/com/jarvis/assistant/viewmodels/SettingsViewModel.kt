@@ -9,6 +9,7 @@ import com.jarvis.assistant.ai.ClaudeProvider
 import com.jarvis.assistant.ai.ConnectionTestResult
 import com.jarvis.assistant.ai.GeminiProvider
 import com.jarvis.assistant.ai.OpenAIProvider
+import com.jarvis.assistant.ai.OpenRouterProvider
 import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
@@ -75,7 +76,7 @@ class SettingsViewModel(
     val enabledProviders = preferencesManager.enabledProviders.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = setOf("gemini", "openai", "claude")
+        initialValue = setOf("gemini", "openai", "claude", "openrouter")
     )
 
     private val _settingsState = MutableStateFlow(SettingsUiState())
@@ -90,23 +91,31 @@ class SettingsViewModel(
             val geminiKey = secureKeyStore.getApiKey("gemini")
             val openaiKey = secureKeyStore.getApiKey("openai")
             val claudeKey = secureKeyStore.getApiKey("claude")
-            val enabledSet = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude")
+            val openrouterKey = secureKeyStore.getApiKey("openrouter")
+
+            val enabledSet = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
+            val selectedModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
 
             val geminiProvider = GeminiProvider(context) { secureKeyStore.getApiKey("gemini") }
             val openaiProvider = OpenAIProvider(context, { secureKeyStore.getApiKey("openai") }, { "" })
-            val claudeProvider = ClaudeProvider { secureKeyStore.getApiKey("claude") }
+            val claudeProvider = ClaudeProvider(context) { secureKeyStore.getApiKey("claude") }
+            val openrouterProvider = OpenRouterProvider(context) { secureKeyStore.getApiKey("openrouter") }
 
-            val geminiModels = geminiProvider.getAvailableModels(AILevel.MEDIUM) +
+            val geminiModels = (geminiProvider.getAvailableModels(AILevel.MEDIUM) +
                     geminiProvider.getAvailableModels(AILevel.LIGHT) +
-                    geminiProvider.getAvailableModels(AILevel.HIGH)
+                    geminiProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
 
-            val openaiModels = openaiProvider.getAvailableModels(AILevel.MEDIUM) +
+            val openaiModels = (openaiProvider.getAvailableModels(AILevel.MEDIUM) +
                     openaiProvider.getAvailableModels(AILevel.LIGHT) +
-                    openaiProvider.getAvailableModels(AILevel.HIGH)
+                    openaiProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
 
-            val claudeModels = claudeProvider.getAvailableModels(AILevel.MEDIUM) +
+            val claudeModels = (claudeProvider.getAvailableModels(AILevel.MEDIUM) +
                     claudeProvider.getAvailableModels(AILevel.LIGHT) +
-                    claudeProvider.getAvailableModels(AILevel.HIGH)
+                    claudeProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
+
+            val openrouterModels = (openrouterProvider.getAvailableModels(AILevel.MEDIUM) +
+                    openrouterProvider.getAvailableModels(AILevel.LIGHT) +
+                    openrouterProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
 
             val list = listOf(
                 AIProviderConfig(
@@ -115,8 +124,8 @@ class SettingsViewModel(
                     displayName = "Google Gemini",
                     apiKey = geminiKey,
                     isEnabled = enabledSet.contains("gemini"),
-                    availableModels = geminiModels.distinctBy { it.id },
-                    selectedModel = "gemini-2.0-flash",
+                    availableModels = geminiModels,
+                    selectedModel = selectedModels["gemini"] ?: "gemini-2.5-flash",
                     status = if (geminiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
@@ -125,8 +134,8 @@ class SettingsViewModel(
                     displayName = "OpenAI",
                     apiKey = openaiKey,
                     isEnabled = enabledSet.contains("openai"),
-                    availableModels = openaiModels.distinctBy { it.id },
-                    selectedModel = "gpt-4o",
+                    availableModels = openaiModels,
+                    selectedModel = selectedModels["openai"] ?: "gpt-4o",
                     status = if (openaiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
@@ -135,9 +144,19 @@ class SettingsViewModel(
                     displayName = "Anthropic Claude",
                     apiKey = claudeKey,
                     isEnabled = enabledSet.contains("claude"),
-                    availableModels = claudeModels.distinctBy { it.id },
-                    selectedModel = "claude-3-5-sonnet-20241022",
+                    availableModels = claudeModels,
+                    selectedModel = selectedModels["claude"] ?: "claude-3-5-sonnet-20241022",
                     status = if (claudeKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                ),
+                AIProviderConfig(
+                    id = "openrouter",
+                    type = ProviderType.OPENROUTER,
+                    displayName = "OpenRouter",
+                    apiKey = openrouterKey,
+                    isEnabled = enabledSet.contains("openrouter"),
+                    availableModels = openrouterModels,
+                    selectedModel = selectedModels["openrouter"] ?: "meta-llama/llama-3.3-70b-instruct:free",
+                    status = if (openrouterKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 )
             )
 
@@ -181,6 +200,20 @@ class SettingsViewModel(
         }
     }
 
+    fun selectModel(providerId: String, modelId: String) {
+        viewModelScope.launch {
+            preferencesManager.setSelectedModel(providerId, modelId)
+            val updated = _settingsState.value.providers.map {
+                if (it.id == providerId) it.copy(selectedModel = modelId) else it
+            }
+            _settingsState.value = _settingsState.value.copy(providers = updated)
+        }
+    }
+
+    fun refreshModels(providerId: String) {
+        testConnection(providerId)
+    }
+
     fun setManualProvider(providerId: String?) {
         viewModelScope.launch {
             preferencesManager.setManualProvider(providerId)
@@ -215,8 +248,8 @@ class SettingsViewModel(
             val providerInstance: AIProvider = when (providerConfig.type) {
                 ProviderType.GEMINI -> GeminiProvider(context) { providerConfig.apiKey }
                 ProviderType.OPENAI -> OpenAIProvider(context, { providerConfig.apiKey }, { providerConfig.baseUrl })
-                ProviderType.CLAUDE -> ClaudeProvider { providerConfig.apiKey }
-                else -> GeminiProvider(context) { providerConfig.apiKey }
+                ProviderType.CLAUDE -> ClaudeProvider(context) { providerConfig.apiKey }
+                ProviderType.OPENROUTER -> OpenRouterProvider(context) { providerConfig.apiKey }
             }
 
             val testResult: ConnectionTestResult = providerInstance.testConnection(providerConfig.apiKey, providerConfig.baseUrl)
@@ -228,11 +261,23 @@ class SettingsViewModel(
                     providerConfig.availableModels
                 }
 
+                val currentSelected = providerConfig.selectedModel
+                val newSelected = if (updatedModels.any { it.id == currentSelected }) {
+                    currentSelected
+                } else {
+                    updatedModels.firstOrNull()?.id ?: currentSelected
+                }
+
+                if (newSelected != currentSelected) {
+                    preferencesManager.setSelectedModel(providerId, newSelected)
+                }
+
                 val updatedProviders = _settingsState.value.providers.map {
                     if (it.id == providerId) {
                         it.copy(
                             status = ProviderStatus.CONNECTED,
                             availableModels = updatedModels,
+                            selectedModel = newSelected,
                             lastError = null
                         )
                     } else it
@@ -277,7 +322,6 @@ class SettingsViewModel(
             capabilities = capabilities,
             description = "Modelo cadastrado manualmente pelo usuário."
         )
-
         val updated = _settingsState.value.providers.map { p ->
             if (p.id == providerId) {
                 val existing = p.availableModels.filter { it.id != modelId }

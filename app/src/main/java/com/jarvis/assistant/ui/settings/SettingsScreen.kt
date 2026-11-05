@@ -83,6 +83,10 @@ import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.ModelCapability
 import com.jarvis.assistant.ui.components.JarvisMascot
+import com.jarvis.assistant.JarvisVersion
+import androidx.compose.ui.draw.scale
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.ui.wizard.ModelConfigWizardDialog
 import com.jarvis.assistant.viewmodels.SettingsViewModel
@@ -114,7 +118,7 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "v2.0.1",
+                                text = "v${JarvisVersion.VERSION_NAME}",
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = ElectricOrange,
@@ -144,7 +148,7 @@ fun SettingsScreen(
         ) {
             // SEÇÃO 1: SISTEMA MULTIAGENTE V2.0.1
             item {
-                SectionHeader(title = "SISTEMA MULTIAGENTE (V2.0.1)", icon = Icons.Default.Psychology)
+                SectionHeader(title = "SISTEMA MULTIAGENTE (V${JarvisVersion.VERSION_NAME})", icon = Icons.Default.Psychology)
             }
 
             item {
@@ -228,6 +232,12 @@ fun SettingsScreen(
                             onOpenAddModel = { providerToAddModel = provider },
                             onToggleModel = { modelId, isEnabled ->
                                 viewModel.toggleModelEnabled(provider.id, modelId, isEnabled)
+                            },
+                            onSelectModel = { modelId ->
+                                viewModel.selectModel(provider.id, modelId)
+                            },
+                            onRefreshModels = {
+                                viewModel.refreshModels(provider.id)
                             }
                         )
                     }
@@ -295,7 +305,8 @@ fun SettingsScreen(
                             null to "Automático (Orquestrador Jarvis Multiagente)",
                             "gemini" to "Google Gemini (Exclusivo)",
                             "openai" to "OpenAI (Exclusivo)",
-                            "claude" to "Anthropic Claude (Exclusivo)"
+                            "claude" to "Anthropic Claude (Exclusivo)",
+                            "openrouter" to "OpenRouter (Exclusivo)"
                         )
 
                         routingOptions.forEach { (provId, label) ->
@@ -453,7 +464,7 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Diagnóstico do Sistema Jarvis v2.0.1",
+                            text = "Diagnóstico do Sistema Jarvis v${JarvisVersion.VERSION_NAME}",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -546,13 +557,13 @@ fun SettingsScreen(
                             Column {
                                 Text(text = "Jarvis Assistant", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = "Versão 2.0.1 (Build Code: 5)",
+                                    text = "Versão ${JarvisVersion.VERSION_NAME} (Build Code: ${JarvisVersion.VERSION_CODE})",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ElectricOrange,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Nativo Kotlin • Jetpack Compose • Multiagente V2.0.1 • Room 2.6.1 • Keystore AES-256",
+                                    text = "Nativo Kotlin • Jetpack Compose • Multiagente V${JarvisVersion.VERSION_NAME} • Room 2.6.1 • Keystore AES-256",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -672,7 +683,9 @@ private fun ProviderCard(
     onTestConnection: () -> Unit,
     onRemoveKey: () -> Unit,
     onOpenAddModel: () -> Unit,
-    onToggleModel: (String, Boolean) -> Unit
+    onToggleModel: (String, Boolean) -> Unit,
+    onSelectModel: (String) -> Unit,
+    onRefreshModels: () -> Unit
 ) {
     var expandedModels by remember { mutableStateOf(false) }
 
@@ -752,6 +765,43 @@ private fun ProviderCard(
                 shape = RoundedCornerShape(12.dp)
             )
 
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = ElectricOrange, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Modelo Ativo: ",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = provider.selectedModel,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ElectricOrange,
+                            maxLines = 1
+                        )
+                    }
+                    TextButton(onClick = onRefreshModels) {
+                        Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(14.dp), tint = ElectricOrange)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Atualizar", style = MaterialTheme.typography.labelSmall, color = ElectricOrange)
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -783,23 +833,68 @@ private fun ProviderCard(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     provider.availableModels.forEach { model ->
+                        val isCurrentSelected = provider.selectedModel == model.id
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                                .background(
+                                    if (isCurrentSelected) ElectricOrange.copy(alpha = 0.12f)
+                                    else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                                )
+                                .clickable { onSelectModel(model.id) }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = model.displayName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    text = model.capabilities.joinToString(", ") { it.displayName },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                RadioButton(
+                                    selected = isCurrentSelected,
+                                    onClick = { onSelectModel(model.id) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = ElectricOrange)
                                 )
+                                Column {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = model.displayName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (isCurrentSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isCurrentSelected) ElectricOrange else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (isCurrentSelected) {
+                                            Surface(
+                                                color = ElectricOrange,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "ATIVO",
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = androidx.compose.ui.graphics.Color.Black,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Text(
+                                        text = model.id,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = model.capabilities.joinToString(", ") { it.displayName },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        maxLines = 1
+                                    )
+                                }
                             }
                             Switch(
                                 checked = model.isEnabled,

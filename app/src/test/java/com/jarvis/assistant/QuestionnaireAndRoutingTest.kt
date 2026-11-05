@@ -61,11 +61,18 @@ class QuestionnaireAndRoutingTest {
             defaultLevel = AILevel.HIGH,
             capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING)
         )
-
+        val openrouterModel = AIModelInfo(
+            id = "meta-llama/llama-3.3-70b-instruct:free",
+            displayName = "Llama 3.3 70B Instruct (Free)",
+            providerId = "openrouter",
+            defaultLevel = AILevel.HIGH,
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING)
+        )
         return listOf(
             TestAIProvider("gemini", ProviderType.GEMINI, "Google Gemini", listOf(geminiModel)),
             TestAIProvider("openai", ProviderType.OPENAI, "OpenAI", listOf(openaiModel)),
-            TestAIProvider("claude", ProviderType.CLAUDE, "Anthropic Claude", listOf(claudeModel))
+            TestAIProvider("claude", ProviderType.CLAUDE, "Anthropic Claude", listOf(claudeModel)),
+            TestAIProvider("openrouter", ProviderType.OPENROUTER, "OpenRouter", listOf(openrouterModel))
         )
     }
 
@@ -73,13 +80,12 @@ class QuestionnaireAndRoutingTest {
     fun testGenerateAssignments_strictlyExcludesDisabledProviders() {
         val providers = createSampleProviders()
         val enabledIds = setOf("openai")
-
         val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
-
         assignments.forEach { assignment ->
             assertEquals("openai", assignment.providerId)
             assertFalse(assignment.providerId == "gemini")
             assertFalse(assignment.providerId == "claude")
+            assertFalse(assignment.providerId == "openrouter")
         }
     }
 
@@ -87,13 +93,30 @@ class QuestionnaireAndRoutingTest {
     fun testGenerateAssignments_withGeminiDisabled_noGeminiEverAssigned() {
         val providers = createSampleProviders()
         val enabledIds = setOf("openai", "claude")
-
         val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, enabledIds)
-
         assignments.forEach { assignment ->
             assertTrue(assignment.providerId == "openai" || assignment.providerId == "claude")
             assertFalse(assignment.providerId == "gemini")
             assertFalse(assignment.modelName.contains("1.5"))
+        }
+    }
+
+    @Test
+    fun testGenerateAssignments_withOpenRouterOnly() {
+        val openrouterModel = AIModelInfo(
+            id = "meta-llama/llama-3.3-70b-instruct:free",
+            displayName = "Llama 3.3 70B",
+            providerId = "openrouter",
+            defaultLevel = AILevel.HIGH,
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING)
+        )
+        val providers = listOf(
+            TestAIProvider("openrouter", ProviderType.OPENROUTER, "OpenRouter", listOf(openrouterModel))
+        )
+        val assignments = QuestionnaireEngine.generateOptimalAssignments(providers, setOf("openrouter"))
+        assignments.forEach {
+            assertEquals("openrouter", it.providerId)
+            assertEquals("meta-llama/llama-3.3-70b-instruct:free", it.modelName)
         }
     }
 }

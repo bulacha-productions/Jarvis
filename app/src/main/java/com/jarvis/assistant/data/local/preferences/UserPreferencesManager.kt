@@ -19,10 +19,11 @@ class UserPreferencesManager(private val context: Context) {
 
     private val KEY_DARK_THEME = booleanPreferencesKey("pref_dark_theme")
     private val KEY_AI_LEVEL = stringPreferencesKey("pref_ai_level")
-    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v2_0_1")
-    private val KEY_MULTI_AGENT_ENABLED = booleanPreferencesKey("pref_multi_agent_enabled_v2_0_1")
-    private val KEY_ENABLED_PROVIDERS = stringSetPreferencesKey("pref_enabled_providers_v2_0_1")
-    private val KEY_MANUAL_PROVIDER = stringPreferencesKey("pref_manual_provider_v2_0_1")
+    private val KEY_TASK_ASSIGNMENTS = stringPreferencesKey("pref_task_assignments_v2_0_2")
+    private val KEY_MULTI_AGENT_ENABLED = booleanPreferencesKey("pref_multi_agent_enabled_v2_0_2")
+    private val KEY_ENABLED_PROVIDERS = stringSetPreferencesKey("pref_enabled_providers_v2_0_2")
+    private val KEY_MANUAL_PROVIDER = stringPreferencesKey("pref_manual_provider_v2_0_2")
+    private val KEY_SELECTED_MODELS = stringPreferencesKey("pref_selected_models_v2_0_2")
 
     val isDarkTheme: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_DARK_THEME] ?: true
@@ -37,7 +38,30 @@ class UserPreferencesManager(private val context: Context) {
     }
 
     val enabledProviders: Flow<Set<String>> = context.dataStore.data.map { preferences ->
-        preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude")
+        preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude", "openrouter")
+    }
+
+    val selectedModels: Flow<Map<String, String>> = context.dataStore.data.map { preferences ->
+        val raw = preferences[KEY_SELECTED_MODELS] ?: return@map emptyMap()
+        val result = mutableMapOf<String, String>()
+        try {
+            val json = JSONObject(raw)
+            val keys = json.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                result[k] = json.getString(k)
+            }
+        } catch (_: Exception) {}
+        result
+    }
+
+    suspend fun setSelectedModel(providerId: String, modelId: String) {
+        context.dataStore.edit { preferences ->
+            val raw = preferences[KEY_SELECTED_MODELS] ?: "{}"
+            val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+            json.put(providerId, modelId)
+            preferences[KEY_SELECTED_MODELS] = json.toString()
+        }
     }
 
     val aiLevel: Flow<AILevel> = context.dataStore.data.map { preferences ->
@@ -82,7 +106,7 @@ class UserPreferencesManager(private val context: Context) {
 
     suspend fun setProviderEnabled(providerId: String, isEnabled: Boolean) {
         context.dataStore.edit { preferences ->
-            val current = preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude")
+            val current = preferences[KEY_ENABLED_PROVIDERS] ?: setOf("gemini", "openai", "claude", "openrouter")
             val updated = if (isEnabled) {
                 current + providerId
             } else {
@@ -125,12 +149,10 @@ class UserPreferencesManager(private val context: Context) {
                 val task = ModelTask.values().find { it.id == taskId } ?: ModelTask.GENERAL_CHAT
                 val providerId = obj.getString("providerId")
                 var modelName = obj.getString("modelName")
-
-                // Remove completamente qualquer referência a gemini-1.5 e gemini-2.5
-                if (modelName.contains("gemini-1.5") || modelName.contains("gemini-2.5")) {
-                    modelName = "gemini-2.0-flash"
+                // Apenas remove gemini-1.5 legado se existir de versões muito antigas; preserva gemini-2.0, gemini-2.5, etc.
+                if (modelName.contains("gemini-1.5")) {
+                    modelName = "gemini-2.5-flash"
                 }
-
                 val level = try { AILevel.valueOf(obj.getString("level")) } catch (_: Exception) { AILevel.MEDIUM }
                 val reason = obj.optString("reason", "")
                 map[taskId] = TaskAssignment(task, providerId, modelName, level, reason)
@@ -144,7 +166,7 @@ class UserPreferencesManager(private val context: Context) {
     private fun getDefaultAssignments(): Map<String, TaskAssignment> {
         val map = mutableMapOf<String, TaskAssignment>()
         map[ModelTask.GENERAL_CHAT.id] = TaskAssignment(
-            ModelTask.GENERAL_CHAT, "gemini", "gemini-2.0-flash", AILevel.MEDIUM,
+            ModelTask.GENERAL_CHAT, "gemini", "gemini-2.5-flash", AILevel.MEDIUM,
             "Padrão do Jarvis Central com alta velocidade e naturalidade."
         )
         map[ModelTask.QUICK_QUESTIONS.id] = TaskAssignment(
@@ -160,7 +182,7 @@ class UserPreferencesManager(private val context: Context) {
             "Agente Analítico: encadeamento dedutivo, lógica e matemática avançada."
         )
         map[ModelTask.RESEARCH.id] = TaskAssignment(
-            ModelTask.RESEARCH, "gemini", "gemini-2.0-flash", AILevel.MEDIUM,
+            ModelTask.RESEARCH, "gemini", "gemini-2.5-flash", AILevel.MEDIUM,
             "Agente de Pesquisa: síntese ampla e investigação comparativa."
         )
         map[ModelTask.CREATIVE_WRITING.id] = TaskAssignment(
@@ -168,11 +190,11 @@ class UserPreferencesManager(private val context: Context) {
             "Agente Criativo: estilo narrativo refinado e ideação expressiva."
         )
         map[ModelTask.IMAGE_ANALYSIS.id] = TaskAssignment(
-            ModelTask.IMAGE_ANALYSIS, "gemini", "gemini-2.0-flash", AILevel.HIGH,
+            ModelTask.IMAGE_ANALYSIS, "gemini", "gemini-2.5-flash", AILevel.HIGH,
             "Visão computacional e OCR nativo com alta sensibilidade visual."
         )
         map[ModelTask.DOCUMENT_ANALYSIS.id] = TaskAssignment(
-            ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-2.0-flash", AILevel.HIGH,
+            ModelTask.DOCUMENT_ANALYSIS, "gemini", "gemini-2.5-flash", AILevel.HIGH,
             "Janela de contexto longa para análise aprofundada de documentos e relatórios."
         )
         return map

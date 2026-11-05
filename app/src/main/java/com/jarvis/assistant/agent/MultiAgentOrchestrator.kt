@@ -1,5 +1,6 @@
 package com.jarvis.assistant.agent
 
+import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.ai.AIProvider
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.Attachment
@@ -14,15 +15,8 @@ import java.util.Locale
 class MultiAgentOrchestrator(
     private val providers: List<AIProvider>
 ) {
-
-    /**
-     * Limite rígido anti-loop de iterações entre agentes
-     */
     private val MAX_AGENT_STEPS = 3
 
-    /**
-     * Analisa o prompt e determina o plano de execução
-     */
     fun createExecutionPlan(
         prompt: String,
         attachment: Attachment?,
@@ -30,7 +24,6 @@ class MultiAgentOrchestrator(
         isMultiAgentEnabled: Boolean,
         manualProviderId: String?
     ): AgentPlan {
-        // Se houver seleção manual ou multiagente desativado, rota direta
         if (!isMultiAgentEnabled || !manualProviderId.isNullOrBlank()) {
             val detectedTask = CapabilityDetector.detectTask(prompt, attachment)
             val role = AgentRole.fromTaskId(detectedTask.id)
@@ -77,7 +70,6 @@ class MultiAgentOrchestrator(
                 cleanPrompt.contains("matemática") || cleanPrompt.contains("resolva o problema") ||
                 cleanPrompt.contains("otimize") || cleanPrompt.contains("equação")
 
-        // Critérios para orquestração de múltiplos especialistas
         val isComplex = (isCodingIntent && isResearchIntent) ||
                 (isCodingIntent && isAnalyticIntent) ||
                 (isResearchIntent && isCreativeIntent) ||
@@ -106,7 +98,6 @@ class MultiAgentOrchestrator(
             )
         }
 
-        // Montagem do pipeline de especialistas
         val steps = mutableListOf<AgentTaskStep>()
         val participants = mutableListOf<AgentRole>()
 
@@ -122,7 +113,6 @@ class MultiAgentOrchestrator(
                     promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Identifique bibliotecas e requisitos técnicos para: $prompt"
                 )
             )
-
             participants.add(AgentRole.PROGRAMMER)
             steps.add(
                 AgentTaskStep(
@@ -146,7 +136,6 @@ class MultiAgentOrchestrator(
                     promptInstruction = "Atue como o Agente de Programação do Jarvis. Construa a implementação de código para: $prompt"
                 )
             )
-
             participants.add(AgentRole.ANALYST)
             steps.add(
                 AgentTaskStep(
@@ -170,7 +159,6 @@ class MultiAgentOrchestrator(
                     promptInstruction = "Atue como o Agente de Pesquisa do Jarvis. Mapeie fatos-chave para: $prompt"
                 )
             )
-
             participants.add(AgentRole.CREATIVE)
             steps.add(
                 AgentTaskStep(
@@ -208,9 +196,6 @@ class MultiAgentOrchestrator(
         )
     }
 
-    /**
-     * Executa a orquestração multiagente completa com chamadas reais aos provedores ativados
-     */
     fun orchestrate(
         prompt: String,
         history: List<Message>,
@@ -219,9 +204,10 @@ class MultiAgentOrchestrator(
         taskAssignments: Map<String, TaskAssignment>,
         enabledProviderIds: Set<String>,
         isMultiAgentEnabled: Boolean,
-        manualProviderId: String? = null
+        manualProviderId: String? = null,
+        selectedModels: Map<String, String> = emptyMap()
     ): Flow<String> = flow {
-        // Validação estrita de seleção manual
+
         if (!manualProviderId.isNullOrBlank()) {
             if (manualProviderId !in enabledProviderIds) {
                 emit("O provedor '$manualProviderId' foi selecionado manualmente, mas está desativado nas Configurações. Ative-o para utilizá-lo.")
@@ -232,12 +218,18 @@ class MultiAgentOrchestrator(
                 emit("O provedor '$manualProviderId' foi selecionado manualmente, mas sua chave de API não está configurada ou válida. Acesse as Configurações.")
                 return@flow
             }
-
+            val activeModel = selectedModels[manualProvider.id] ?: when (manualProvider.id) {
+                "gemini" -> "gemini-2.5-flash"
+                "openai" -> "gpt-4o"
+                "claude" -> "claude-3-5-sonnet-20241022"
+                "openrouter" -> "meta-llama/llama-3.3-70b-instruct:free"
+                else -> ""
+            }
             manualProvider.generateStreamResponse(
                 prompt = prompt,
                 history = history,
                 level = overrideLevel ?: AILevel.MEDIUM,
-                modelName = "",
+                modelName = activeModel,
                 attachment = attachment
             ).collect { chunk ->
                 emit(chunk)
@@ -245,19 +237,15 @@ class MultiAgentOrchestrator(
             return@flow
         }
 
-        // Cria o plano de execução
         val plan = createExecutionPlan(prompt, attachment, overrideLevel, isMultiAgentEnabled, manualProviderId)
 
-        // Se for execução direta em agente único
         if (!plan.isMultiAgentNeeded || plan.steps.isEmpty()) {
             val task = CapabilityDetector.detectTask(prompt, attachment)
-            val (provider, modelName) = resolveProviderAndModel(task, overrideLevel ?: task.defaultLevel, taskAssignments, enabledProviderIds)
-
+            val (provider, modelName) = resolveProviderAndModel(task, overrideLevel ?: task.defaultLevel, taskAssignments, enabledProviderIds, selectedModels)
             if (provider == null) {
-                emit("Nenhum provedor de IA ativado com chave configurada está disponível. Acesse as Configurações para ativar o Google Gemini, OpenAI ou Claude.")
+                emit("Nenhum provedor de IA ativado com chave configurada está disponível. Acesse as Configurações para ativar o Google Gemini, OpenAI, Claude ou OpenRouter.")
                 return@flow
             }
-
             provider.generateStreamResponse(
                 prompt = prompt,
                 history = history,
@@ -270,25 +258,23 @@ class MultiAgentOrchestrator(
             return@flow
         }
 
-        // Execução Multiagente Colaborativa Real
         val agentBadgesHeader = plan.participatingAgents.joinToString(separator = " ") { agent ->
             "[${agent.iconEmoji} ${agent.shortBadge}]"
         }
 
-        emit("🤖 **JARVIS V2.0.1 — Coordenação Multiagente**\n")
+        emit("🤖 **JARVIS v${JarvisVersion.VERSION_NAME} — Coordenação Multiagente**\n")
         emit("Equipe Ativa: $agentBadgesHeader\n\n")
 
         val intermediateResults = mutableListOf<AgentStepResult>()
         var accumulatedContext = ""
-
         var stepCounter = 0
+
         for (step in plan.steps) {
             stepCounter++
             if (stepCounter > MAX_AGENT_STEPS) break
-
             emit("⏳ *[Passo $stepCounter/${plan.steps.size}: ${step.agent.displayName} executando...]*\n\n")
 
-            val (provider, modelName) = resolveProviderAndModel(step.assignedTask, step.targetLevel, taskAssignments, enabledProviderIds)
+            val (provider, modelName) = resolveProviderAndModel(step.assignedTask, step.targetLevel, taskAssignments, enabledProviderIds, selectedModels)
             if (provider == null) {
                 emit("⚠️ [Aviso: Nenhum provedor ativado para ${step.agent.displayName}. Etapa omitida.]\n\n")
                 continue
@@ -302,7 +288,6 @@ class MultiAgentOrchestrator(
 
             val stepOutputBuilder = StringBuilder()
             var stepFailed = false
-
             try {
                 provider.generateStreamResponse(
                     prompt = enrichedPrompt,
@@ -315,7 +300,6 @@ class MultiAgentOrchestrator(
                 }
 
                 val resultText = stepOutputBuilder.toString().trim()
-                // Verifica se a resposta foi um erro HTTP ou de autenticação
                 if (resultText.startsWith("Erro ") || resultText.startsWith("Falha ")) {
                     stepFailed = true
                     intermediateResults.add(
@@ -353,7 +337,6 @@ class MultiAgentOrchestrator(
             }
         }
 
-        // SÍNTESE FINAL OBRIGATÓRIA PELO JARVIS CENTRAL
         emit("✨ **[Jarvis Central: Consolidando Síntese Final Integrada...]**\n\n")
 
         val successfulResults = intermediateResults.filter { it.isSuccess }
@@ -363,8 +346,7 @@ class MultiAgentOrchestrator(
             return@flow
         }
 
-        // Busca um provedor ativo para a síntese final
-        val (synthProvider, synthModel) = resolveProviderAndModel(ModelTask.GENERAL_CHAT, AILevel.HIGH, taskAssignments, enabledProviderIds)
+        val (synthProvider, synthModel) = resolveProviderAndModel(ModelTask.GENERAL_CHAT, AILevel.HIGH, taskAssignments, enabledProviderIds, selectedModels)
         if (synthProvider != null) {
             val synthesisPrompt = buildString {
                 append("Você é o JARVIS Central (Coordenador). Os agentes especialistas da sua equipe executaram as seguintes etapas para a solicitação do usuário:\n\n")
@@ -386,11 +368,9 @@ class MultiAgentOrchestrator(
                     emit(chunk)
                 }
             } catch (_: Exception) {
-                // Se a síntese falhar, exibe o melhor conteúdo gerado pelos especialistas
                 emit(successfulResults.last().content)
             }
         } else {
-            // Emite a última entrega válida
             emit(successfulResults.last().content)
         }
     }
@@ -399,13 +379,13 @@ class MultiAgentOrchestrator(
         task: ModelTask,
         level: AILevel,
         taskAssignments: Map<String, TaskAssignment>,
-        enabledProviderIds: Set<String>
+        enabledProviderIds: Set<String>,
+        selectedModels: Map<String, String> = emptyMap()
     ): Pair<AIProvider?, String> {
         val assignment = taskAssignments[task.id]
         val targetProviderId = assignment?.providerId ?: "gemini"
         var targetModelName = assignment?.modelName ?: ""
 
-        // O provedor DEVE estar habilitado em enabledProviderIds e ter chave válida
         var provider: AIProvider? = null
         if (targetProviderId in enabledProviderIds) {
             val candidate = providers.find { it.id == targetProviderId }
@@ -414,10 +394,24 @@ class MultiAgentOrchestrator(
             }
         }
 
-        // Se o provedor atribuído estiver desativado ou indisponível, busca OUTRO provedor habilitado
         if (provider == null) {
             provider = providers.firstOrNull { it.id in enabledProviderIds && it.id != "unconfigured_system" && it.isAvailable() }
             targetModelName = ""
+        }
+
+        if (provider != null) {
+            val userSelected = selectedModels[provider.id]
+            if (!userSelected.isNullOrBlank()) {
+                targetModelName = userSelected
+            } else if (targetModelName.isBlank()) {
+                targetModelName = when (provider.id) {
+                    "gemini" -> "gemini-2.5-flash"
+                    "openai" -> "gpt-4o"
+                    "claude" -> "claude-3-5-sonnet-20241022"
+                    "openrouter" -> "meta-llama/llama-3.3-70b-instruct:free"
+                    else -> ""
+                }
+            }
         }
 
         return Pair(provider, targetModelName)
