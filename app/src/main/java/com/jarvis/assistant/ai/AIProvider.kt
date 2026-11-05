@@ -10,7 +10,9 @@ enum class ProviderType(val displayName: String) {
     GEMINI("Google Gemini"),
     OPENAI("OpenAI"),
     CLAUDE("Anthropic Claude"),
-    OPENROUTER("OpenRouter")
+    OPENROUTER("OpenRouter"),
+    CUSTOM("Provedor Personalizado (OpenAI Compatível)"),
+    MOCK("Jarvis Core (Offline)")
 }
 
 enum class ProviderStatus {
