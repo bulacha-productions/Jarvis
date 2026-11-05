@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ai
 
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.Attachment
@@ -18,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
@@ -25,6 +28,8 @@ class GeminiProvider(
     private val context: Context? = null,
     private val apiKeyProvider: suspend () -> String
 ) : AIProvider {
+
+    constructor(apiKeyProvider: suspend () -> String) : this(null, apiKeyProvider)
 
     override val id: String = "gemini"
     override val type: ProviderType = ProviderType.GEMINI
@@ -80,7 +85,7 @@ class GeminiProvider(
 
     override suspend fun isAvailable(): Boolean {
         val key = apiKeyProvider()
-        return key.isNotBlank()
+        return key.trim().isNotBlank()
     }
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
@@ -148,7 +153,7 @@ class GeminiProvider(
         }
     }
 
-    private fun parseModelsFromJson(jsonString: String): List<AIModelInfo> {
+    fun parseModelsFromJson(jsonString: String): List<AIModelInfo> {
         val models = mutableListOf<AIModelInfo>()
         try {
             val root = JSONObject(jsonString)
@@ -172,16 +177,21 @@ class GeminiProvider(
 
                 if (supportsGenerate) {
                     val cleanId = rawName.removePrefix("models/").trim()
-                    val capabilities = mutableSetOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION)
-                    if (cleanId.contains("flash") || cleanId.contains("pro")) {
-                        capabilities.add(ModelCapability.CODE_EXECUTION)
-                        capabilities.add(ModelCapability.MULTI_AGENT_READY)
-                    }
+                    if (cleanId.contains("embedding") || cleanId.contains("aqa")) continue
+
+                    val capabilities = setOf(
+                        ModelCapability.TEXT,
+                        ModelCapability.CODING,
+                        ModelCapability.REASONING,
+                        ModelCapability.IMAGE_ANALYSIS,
+                        ModelCapability.DOCUMENT_ANALYSIS,
+                        ModelCapability.LONG_CONTEXT
+                    )
 
                     val level = when {
-                        cleanId.contains("pro") -> AILevel.POWERFUL
-                        cleanId.contains("flash") -> AILevel.FAST
-                        else -> AILevel.BALANCED
+                        cleanId.contains("pro") -> AILevel.HIGH
+                        cleanId.contains("flash") -> AILevel.MEDIUM
+                        else -> AILevel.LIGHT
                     }
 
                     models.add(
@@ -196,14 +206,15 @@ class GeminiProvider(
                     )
                 }
             }
-        } catch (e: Exception) {
-            // Ignora falhas de parse
-        }
-        return models.sortedWith(
-            compareByDescending<AIModelInfo> { it.id.contains("2.5") }
-                .thenByDescending { it.id.contains("2.0") }
-                .thenBy { it.displayName }
-        )
+        } catch (_: Exception) {}
+        models.sortWith(Comparator { a, b ->
+            if (a.id.contains("2.5") && !b.id.contains("2.5")) return@Comparator -1
+            if (!a.id.contains("2.5") && b.id.contains("2.5")) return@Comparator 1
+            if (a.id.contains("2.0") && !b.id.contains("2.0")) return@Comparator -1
+            if (!a.id.contains("2.0") && b.id.contains("2.0")) return@Comparator 1
+            a.displayName.compareTo(b.displayName)
+        })
+        return models
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
@@ -220,24 +231,24 @@ class GeminiProvider(
                 id = "gemini-2.5-flash",
                 displayName = "Gemini 2.5 Flash",
                 providerId = id,
-                defaultLevel = AILevel.BALANCED,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION),
+                defaultLevel = AILevel.MEDIUM,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
                 description = "Google Gemini 2.5 Flash de alta velocidade"
             ),
             AIModelInfo(
                 id = "gemini-2.0-flash",
                 displayName = "Gemini 2.0 Flash",
                 providerId = id,
-                defaultLevel = AILevel.FAST,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION),
+                defaultLevel = AILevel.LIGHT,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
                 description = "Google Gemini 2.0 Flash"
             ),
             AIModelInfo(
                 id = "gemini-2.5-pro",
                 displayName = "Gemini 2.5 Pro",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "Google Gemini 2.5 Pro de alta complexidade e raciocínio"
             )
         )
@@ -259,35 +270,45 @@ class GeminiProvider(
         val resolvedModel = modelName.trim().removePrefix("models/").ifBlank { DEFAULT_FALLBACK_MODEL }
 
         val contentsArray = JSONArray()
-        for (msg in history.takeLast(12)) {
-            val role = if (msg.isUser) "user" else "model"
-            val contentObj = JSONObject()
-            contentObj.put("role", role)
+        var lastRole: String? = null
+        for (msg in history.filter { it.content.isNotBlank() }.takeLast(12)) {
+            val currentRole = if (msg.isFromUser) "user" else "model"
+            if (contentsArray.length() == 0 && currentRole != "user") continue
+            if (currentRole == lastRole) continue
+
             val partsArray = JSONArray()
-            val textPart = JSONObject()
-            textPart.put("text", msg.content)
-            partsArray.put(textPart)
-            contentObj.put("parts", partsArray)
-            contentsArray.put(contentObj)
+            partsArray.put(JSONObject().put("text", msg.content.trim()))
+            contentsArray.put(JSONObject().apply {
+                put("role", currentRole)
+                put("parts", partsArray)
+            })
+            lastRole = currentRole
         }
 
         val currentUserContent = JSONObject()
         currentUserContent.put("role", "user")
         val currentParts = JSONArray()
 
-        if (attachment != null && !attachment.base64Data.isNullOrBlank()) {
-            val imagePart = JSONObject()
-            val inlineData = JSONObject()
-            inlineData.put("mimeType", attachment.mimeType)
-            inlineData.put("data", attachment.base64Data)
-            imagePart.put("inlineData", inlineData)
-            currentParts.put(imagePart)
+        if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
+            try {
+                val uri = Uri.parse(attachment.uriString)
+                context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                    val bytes = stream.readBytes()
+                    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
+                    val imagePart = JSONObject().apply {
+                        put("inlineData", JSONObject().apply {
+                            put("mimeType", mime)
+                            put("data", base64)
+                        })
+                    }
+                    currentParts.put(imagePart)
+                }
+            } catch (_: Exception) {}
         }
 
-        val promptPart = JSONObject()
-        promptPart.put("text", prompt.ifBlank { "Analise o arquivo anexo." })
+        val promptPart = JSONObject().put("text", prompt.ifBlank { "Olá" })
         currentParts.put(promptPart)
-
         currentUserContent.put("parts", currentParts)
         contentsArray.put(currentUserContent)
 
@@ -337,9 +358,7 @@ class GeminiProvider(
                                             }
                                         }
                                     }
-                                } catch (e: Exception) {
-                                    // Continua lendo os próximos frames
-                                }
+                                } catch (_: Exception) {}
                             }
                         }
                         success = true

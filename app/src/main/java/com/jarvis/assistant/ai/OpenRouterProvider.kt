@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ai
 
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.Attachment
@@ -18,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
@@ -25,6 +28,8 @@ class OpenRouterProvider(
     private val context: Context? = null,
     private val apiKeyProvider: suspend () -> String
 ) : AIProvider {
+
+    constructor(apiKeyProvider: suspend () -> String) : this(null, apiKeyProvider)
 
     override val id: String = "openrouter"
     override val type: ProviderType = ProviderType.OPENROUTER
@@ -74,7 +79,7 @@ class OpenRouterProvider(
 
     override suspend fun isAvailable(): Boolean {
         val key = apiKeyProvider()
-        return key.isNotBlank()
+        return key.trim().isNotBlank()
     }
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
@@ -105,9 +110,7 @@ class OpenRouterProvider(
                         val json = JSONObject(body)
                         val data = json.optJSONObject("data")
                         val label = data?.optString("label") ?: "Conta Ativa"
-                        val limit = data?.optDouble("limit")
-                        val usage = data?.optDouble("usage")
-                        if (limit != null && usage != null) " ($label - Uso: $usage / Limite: $limit)" else " ($label)"
+                        " ($label)"
                     } catch (e: Exception) {
                         ""
                     }
@@ -169,24 +172,24 @@ class OpenRouterProvider(
                             pricing.optDouble("prompt", 1.0) == 0.0 &&
                             pricing.optDouble("completion", 1.0) == 0.0)
 
-                    val capabilities = mutableSetOf(ModelCapability.TEXT_GENERATION)
+                    val capabilities = mutableSetOf(ModelCapability.TEXT)
                     val architecture = item.optJSONObject("architecture")
                     val modality = architecture?.optString("modality", "") ?: ""
                     if (modality.contains("image") || modality.contains("multimodal")) {
-                        capabilities.add(ModelCapability.VISION)
+                        capabilities.add(ModelCapability.IMAGE_ANALYSIS)
                     }
                     if (modelId.contains("code") || modelId.contains("coder") || modelId.contains("deepseek")) {
-                        capabilities.add(ModelCapability.CODE_EXECUTION)
+                        capabilities.add(ModelCapability.CODING)
                     }
                     if (modelId.contains("70b") || modelId.contains("r1") || modelId.contains("claude") || modelId.contains("gpt-4")) {
-                        capabilities.add(ModelCapability.MULTI_AGENT_READY)
+                        capabilities.add(ModelCapability.REASONING)
                     }
 
                     val level = when {
-                        isFree -> AILevel.BALANCED
-                        modelId.contains("70b") || modelId.contains("r1") || modelId.contains("pro") || modelId.contains("sonnet") -> AILevel.POWERFUL
-                        modelId.contains("flash") || modelId.contains("mini") || modelId.contains("8b") -> AILevel.FAST
-                        else -> AILevel.BALANCED
+                        isFree -> AILevel.MEDIUM
+                        modelId.contains("70b") || modelId.contains("r1") || modelId.contains("pro") || modelId.contains("sonnet") -> AILevel.HIGH
+                        modelId.contains("flash") || modelId.contains("mini") || modelId.contains("8b") -> AILevel.LIGHT
+                        else -> AILevel.MEDIUM
                     }
 
                     val display = if (isFree && !modelName.contains("free", ignoreCase = true)) {
@@ -207,13 +210,15 @@ class OpenRouterProvider(
                     )
                 }
 
-                val prioritized = models.sortedWith(
-                    compareByDescending<AIModelInfo> { it.id == DEFAULT_FREE_MODEL }
-                        .thenByDescending { it.id.endsWith(":free") }
-                        .thenBy { it.displayName }
-                )
+                models.sortWith(Comparator { a, b ->
+                    if (a.id == DEFAULT_FREE_MODEL) return@Comparator -1
+                    if (b.id == DEFAULT_FREE_MODEL) return@Comparator 1
+                    if (a.id.endsWith(":free") && !b.id.endsWith(":free")) return@Comparator -1
+                    if (!a.id.endsWith(":free") && b.id.endsWith(":free")) return@Comparator 1
+                    a.displayName.compareTo(b.displayName)
+                })
 
-                Result.success(prioritized)
+                Result.success(models)
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -234,24 +239,24 @@ class OpenRouterProvider(
                 id = DEFAULT_FREE_MODEL,
                 displayName = "Llama 3.3 70B Instruct (Free)",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "Meta Llama 3.3 70B via OpenRouter Free Tier"
             ),
             AIModelInfo(
                 id = "google/gemini-2.5-flash",
                 displayName = "Gemini 2.5 Flash (OpenRouter)",
                 providerId = id,
-                defaultLevel = AILevel.BALANCED,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.CODE_EXECUTION, ModelCapability.VISION),
+                defaultLevel = AILevel.MEDIUM,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.IMAGE_ANALYSIS),
                 description = "Google Gemini 2.5 Flash via OpenRouter"
             ),
             AIModelInfo(
                 id = "deepseek/deepseek-r1:free",
                 displayName = "DeepSeek R1 (Free)",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "DeepSeek R1 Reasoning via OpenRouter Free Tier"
             )
         )
@@ -274,7 +279,7 @@ class OpenRouterProvider(
 
         val messagesArray = JSONArray()
         for (msg in history.takeLast(16)) {
-            val role = if (msg.isUser) "user" else "assistant"
+            val role = if (msg.isFromUser) "user" else "assistant"
             val msgObj = JSONObject()
             msgObj.put("role", role)
             msgObj.put("content", msg.content)
@@ -283,23 +288,36 @@ class OpenRouterProvider(
 
         val currentUserMsg = JSONObject()
         currentUserMsg.put("role", "user")
-        if (attachment != null && (attachment.mimeType.startsWith("image/") || attachment.isImage)) {
-            val contentArray = JSONArray()
-            val textPart = JSONObject()
-            textPart.put("type", "text")
-            textPart.put("text", prompt.ifBlank { "Analise a imagem em anexo." })
-            contentArray.put(textPart)
 
-            val base64Data = attachment.base64Data
+        if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
+            var base64Data: String? = null
+            try {
+                val uri = Uri.parse(attachment.uriString)
+                context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                    val bytes = stream.readBytes()
+                    base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
+            } catch (_: Exception) {}
+
             if (!base64Data.isNullOrBlank()) {
+                val contentArray = JSONArray()
+                val textPart = JSONObject()
+                textPart.put("type", "text")
+                textPart.put("text", prompt.ifBlank { "Analise a imagem em anexo." })
+                contentArray.put(textPart)
+
                 val imagePart = JSONObject()
                 imagePart.put("type", "image_url")
                 val imgUrlObj = JSONObject()
-                imgUrlObj.put("url", "data:${attachment.mimeType};base64,$base64Data")
+                val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
+                imgUrlObj.put("url", "data:$mime;base64,$base64Data")
                 imagePart.put("image_url", imgUrlObj)
                 contentArray.put(imagePart)
+
+                currentUserMsg.put("content", contentArray)
+            } else {
+                currentUserMsg.put("content", prompt)
             }
-            currentUserMsg.put("content", contentArray)
         } else {
             currentUserMsg.put("content", prompt)
         }
@@ -353,9 +371,7 @@ class OpenRouterProvider(
                                     emit(text)
                                 }
                             }
-                        } catch (e: Exception) {
-                            // Ignora frames malformados
-                        }
+                        } catch (_: Exception) {}
                     }
                 }
             }

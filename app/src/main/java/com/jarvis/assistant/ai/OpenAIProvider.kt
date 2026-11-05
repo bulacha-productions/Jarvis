@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ai
 
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.Attachment
@@ -18,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
@@ -26,6 +29,8 @@ class OpenAIProvider(
     private val apiKeyProvider: suspend () -> String,
     private val baseUrlProvider: suspend () -> String = { "" }
 ) : AIProvider {
+
+    constructor(apiKeyProvider: suspend () -> String) : this(null, apiKeyProvider, { "" })
 
     override val id: String = "openai"
     override val type: ProviderType = ProviderType.OPENAI
@@ -73,7 +78,7 @@ class OpenAIProvider(
 
     override suspend fun isAvailable(): Boolean {
         val key = apiKeyProvider()
-        return key.isNotBlank()
+        return key.trim().isNotBlank()
     }
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
@@ -156,19 +161,19 @@ class OpenAIProvider(
                 if (id.isBlank()) continue
 
                 if (id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("chatgpt")) {
-                    val capabilities = mutableSetOf(ModelCapability.TEXT_GENERATION)
+                    val capabilities = mutableSetOf(ModelCapability.TEXT)
                     if (id.contains("4o") || id.contains("vision")) {
-                        capabilities.add(ModelCapability.VISION)
+                        capabilities.add(ModelCapability.IMAGE_ANALYSIS)
                     }
                     if (id.contains("4") || id.contains("o1") || id.contains("o3")) {
-                        capabilities.add(ModelCapability.CODE_EXECUTION)
-                        capabilities.add(ModelCapability.MULTI_AGENT_READY)
+                        capabilities.add(ModelCapability.CODING)
+                        capabilities.add(ModelCapability.REASONING)
                     }
 
                     val level = when {
-                        id.contains("o1") || id.contains("o3") || id.contains("4o-") && !id.contains("mini") -> AILevel.POWERFUL
-                        id.contains("mini") || id.contains("3.5") -> AILevel.FAST
-                        else -> AILevel.BALANCED
+                        id.contains("o1") || id.contains("o3") || (id.contains("4o") && !id.contains("mini")) -> AILevel.HIGH
+                        id.contains("mini") || id.contains("3.5") -> AILevel.LIGHT
+                        else -> AILevel.MEDIUM
                     }
 
                     models.add(
@@ -183,14 +188,15 @@ class OpenAIProvider(
                     )
                 }
             }
-        } catch (e: Exception) {
-            // Ignora falhas de parse
-        }
-        return models.sortedWith(
-            compareByDescending<AIModelInfo> { it.id == DEFAULT_MODEL }
-                .thenByDescending { it.id.startsWith("gpt-4o") }
-                .thenBy { it.displayName }
-        )
+        } catch (_: Exception) {}
+        models.sortWith(Comparator { a, b ->
+            if (a.id == DEFAULT_MODEL) return@Comparator -1
+            if (b.id == DEFAULT_MODEL) return@Comparator 1
+            if (a.id.startsWith("gpt-4o") && !b.id.startsWith("gpt-4o")) return@Comparator -1
+            if (!a.id.startsWith("gpt-4o") && b.id.startsWith("gpt-4o")) return@Comparator 1
+            a.displayName.compareTo(b.displayName)
+        })
+        return models
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
@@ -207,24 +213,24 @@ class OpenAIProvider(
                 id = "gpt-4o",
                 displayName = "GPT-4o (Omni)",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "OpenAI modelo flagship multimodal"
             ),
             AIModelInfo(
                 id = "gpt-4o-mini",
                 displayName = "GPT-4o Mini",
                 providerId = id,
-                defaultLevel = AILevel.FAST,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION),
+                defaultLevel = AILevel.LIGHT,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
                 description = "OpenAI modelo rápido e eficiente"
             ),
             AIModelInfo(
                 id = "o3-mini",
                 displayName = "o3-mini",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "OpenAI modelo avançado de raciocínio lógico"
             )
         )
@@ -248,7 +254,7 @@ class OpenAIProvider(
 
         val messagesArray = JSONArray()
         for (msg in history.takeLast(16)) {
-            val role = if (msg.isUser) "user" else "assistant"
+            val role = if (msg.isFromUser) "user" else "assistant"
             val msgObj = JSONObject()
             msgObj.put("role", role)
             msgObj.put("content", msg.content)
@@ -257,21 +263,36 @@ class OpenAIProvider(
 
         val currentUserMsg = JSONObject()
         currentUserMsg.put("role", "user")
-        if (attachment != null && !attachment.base64Data.isNullOrBlank() && (attachment.isImage || attachment.mimeType.startsWith("image/"))) {
-            val contentParts = JSONArray()
-            val textPart = JSONObject()
-            textPart.put("type", "text")
-            textPart.put("text", prompt.ifBlank { "Analise o anexo." })
-            contentParts.put(textPart)
 
-            val imagePart = JSONObject()
-            imagePart.put("type", "image_url")
-            val imgUrl = JSONObject()
-            imgUrl.put("url", "data:${attachment.mimeType};base64,${attachment.base64Data}")
-            imagePart.put("image_url", imgUrl)
-            contentParts.put(imagePart)
+        if (attachment != null && context != null && attachment.uriString?.isNotBlank() == true) {
+            var base64Data: String? = null
+            try {
+                val uri = Uri.parse(attachment.uriString)
+                context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                    val bytes = stream.readBytes()
+                    base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
+            } catch (_: Exception) {}
 
-            currentUserMsg.put("content", contentParts)
+            if (!base64Data.isNullOrBlank()) {
+                val contentParts = JSONArray()
+                val textPart = JSONObject()
+                textPart.put("type", "text")
+                textPart.put("text", prompt.ifBlank { "Analise o anexo." })
+                contentParts.put(textPart)
+
+                val imagePart = JSONObject()
+                imagePart.put("type", "image_url")
+                val imgUrl = JSONObject()
+                val mime = (attachment.mimeType ?: "image/jpeg").ifBlank { "image/jpeg" }
+                imgUrl.put("url", "data:$mime;base64,$base64Data")
+                imagePart.put("image_url", imgUrl)
+                contentParts.put(imagePart)
+
+                currentUserMsg.put("content", contentParts)
+            } else {
+                currentUserMsg.put("content", prompt)
+            }
         } else {
             currentUserMsg.put("content", prompt)
         }
@@ -322,9 +343,7 @@ class OpenAIProvider(
                                     emit(text)
                                 }
                             }
-                        } catch (e: Exception) {
-                            // Ignora frames malformados
-                        }
+                        } catch (_: Exception) {}
                     }
                 }
             }

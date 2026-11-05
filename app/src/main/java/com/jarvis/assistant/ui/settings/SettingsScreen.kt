@@ -86,7 +86,6 @@ import com.jarvis.assistant.ui.components.JarvisMascot
 import com.jarvis.assistant.JarvisVersion
 import androidx.compose.ui.draw.scale
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.ui.wizard.ModelConfigWizardDialog
 import com.jarvis.assistant.viewmodels.SettingsViewModel

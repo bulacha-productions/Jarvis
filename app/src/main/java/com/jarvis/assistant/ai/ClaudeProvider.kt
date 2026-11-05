@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ai
 
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.Attachment
@@ -18,6 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
@@ -25,6 +28,8 @@ class ClaudeProvider(
     private val context: Context? = null,
     private val apiKeyProvider: suspend () -> String
 ) : AIProvider {
+
+    constructor(apiKeyProvider: suspend () -> String) : this(null, apiKeyProvider)
 
     override val id: String = "claude"
     override val type: ProviderType = ProviderType.CLAUDE
@@ -68,7 +73,7 @@ class ClaudeProvider(
 
     override suspend fun isAvailable(): Boolean {
         val key = apiKeyProvider()
-        return key.isNotBlank()
+        return key.trim().isNotBlank()
     }
 
     override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
@@ -151,15 +156,12 @@ class ClaudeProvider(
                 if (id.isBlank()) continue
 
                 val displayName = item.optString("display_name", id)
-                val capabilities = mutableSetOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION)
-                if (id.contains("sonnet") || id.contains("opus")) {
-                    capabilities.add(ModelCapability.MULTI_AGENT_READY)
-                }
+                val capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING)
 
                 val level = when {
-                    id.contains("opus") || id.contains("sonnet") -> AILevel.POWERFUL
-                    id.contains("haiku") -> AILevel.FAST
-                    else -> AILevel.BALANCED
+                    id.contains("opus") || id.contains("sonnet") -> AILevel.HIGH
+                    id.contains("haiku") -> AILevel.LIGHT
+                    else -> AILevel.MEDIUM
                 }
 
                 models.add(
@@ -173,14 +175,13 @@ class ClaudeProvider(
                     )
                 )
             }
-        } catch (e: Exception) {
-            // Ignora falhas de parse
-        }
-        return models.sortedWith(
-            compareByDescending<AIModelInfo> { it.id.contains("3-5-sonnet") }
-                .thenByDescending { it.id.contains("3-7-sonnet") }
-                .thenBy { it.displayName }
-        )
+        } catch (_: Exception) {}
+        models.sortWith(Comparator { a, b ->
+            if (a.id.contains("3-5-sonnet") && !b.id.contains("3-5-sonnet")) return@Comparator -1
+            if (!a.id.contains("3-5-sonnet") && b.id.contains("3-5-sonnet")) return@Comparator 1
+            a.displayName.compareTo(b.displayName)
+        })
+        return models
     }
 
     override suspend fun getAvailableModels(level: AILevel): List<AIModelInfo> {
@@ -197,16 +198,16 @@ class ClaudeProvider(
                 id = "claude-3-5-sonnet-20241022",
                 displayName = "Claude 3.5 Sonnet",
                 providerId = id,
-                defaultLevel = AILevel.POWERFUL,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION, ModelCapability.MULTI_AGENT_READY),
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING),
                 description = "Anthropic Claude 3.5 Sonnet de alta performance"
             ),
             AIModelInfo(
                 id = "claude-3-5-haiku-20241022",
                 displayName = "Claude 3.5 Haiku",
                 providerId = id,
-                defaultLevel = AILevel.FAST,
-                capabilities = setOf(ModelCapability.TEXT_GENERATION, ModelCapability.VISION, ModelCapability.CODE_EXECUTION),
+                defaultLevel = AILevel.LIGHT,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
                 description = "Anthropic Claude 3.5 Haiku veloz"
             )
         )
@@ -229,8 +230,8 @@ class ClaudeProvider(
 
         val messagesArray = JSONArray()
         var lastRole: String? = null
-        for (msg in history.takeLast(16)) {
-            val role = if (msg.isUser) "user" else "assistant"
+        for (msg in history.filter { it.content.isNotBlank() }.takeLast(16)) {
+            val role = if (msg.isFromUser) "user" else "assistant"
             if (role != lastRole) {
                 val msgObj = JSONObject()
                 msgObj.put("role", role)
@@ -297,9 +298,7 @@ class ClaudeProvider(
                                     emit(text)
                                 }
                             }
-                        } catch (e: Exception) {
-                            // Ignora frames malformados
-                        }
+                        } catch (_: Exception) {}
                     }
                 }
             }
