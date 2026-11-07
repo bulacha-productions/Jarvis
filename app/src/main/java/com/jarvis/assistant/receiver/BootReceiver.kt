@@ -77,7 +77,7 @@ class BootReceiver : BroadcastReceiver() {
         val notification = NotificationCompat.Builder(context, BOOT_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Jarvis — Ativação por voz pronta")
-            .setContentText("O celular foi reiniciado. Toque para reativar a escuta contínua de "Jarvis".")
+            .setContentText("O celular foi reiniciado. Toque para reativar a escuta contínua de \"Jarvis\".")
             .setStyle(NotificationCompat.BigTextStyle().bigText(
                 "O celular foi reiniciado com a ativação automática habilitada. Toque aqui para autorizar o início do serviço de microfone."
             ))

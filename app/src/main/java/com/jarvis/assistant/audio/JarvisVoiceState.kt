@@ -23,7 +23,7 @@ sealed class JarvisVoiceState(
     /** Escuta ativa em segundo plano aguardando a palavra-chave "Jarvis" */
     object LISTENING_FOR_WAKE_WORD : JarvisVoiceState(
         label = "Aguardando Palavra-Chave",
-        description = "Diga "Jarvis" para ativar o assistente."
+        description = "Diga \"Jarvis\" para ativar o assistente."
     )
 
     /** Palavra-chave "Jarvis" detectada com sucesso */

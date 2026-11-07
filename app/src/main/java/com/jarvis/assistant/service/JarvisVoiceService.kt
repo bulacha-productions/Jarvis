@@ -245,7 +245,6 @@ class JarvisVoiceService : Service() {
 
     private fun processUserCommand(commandText: String) {
         updateState(JarvisVoiceState.PROCESSING)
-
         serviceScope.launch {
             try {
                 // Obtém ou cria conversa ativa no Room DB
@@ -258,53 +257,54 @@ class JarvisVoiceService : Service() {
                 // Coleta preferências ativas
                 val routingMode = preferencesManager.routingMode.firstOrNull() ?: RoutingMode.AUTOMATIC
                 val multiAgentMode = preferencesManager.multiAgentMode.firstOrNull() ?: MultiAgentMode.AUTOMATIC
+                val isMultiAgent = preferencesManager.isMultiAgentEnabled.firstOrNull() ?: true
                 val preferredProvider = preferencesManager.preferredProvider.firstOrNull()
+                val manualOverride = preferencesManager.manualProviderOverride.firstOrNull()
                 val financialPolicy = preferencesManager.financialPolicy.firstOrNull() ?: FinancialPolicy.FREE_AND_PAID
                 val monthlyBudget = preferencesManager.monthlyBudget.firstOrNull() ?: 10.0
                 val currentSpend = preferencesManager.currentSpend.firstOrNull() ?: 0.0
                 val enabledProviders = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
                 val selectedModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
-
-                val apiKeys = mapOf(
-                    "gemini" to secureKeyStore.getApiKey("gemini"),
-                    "openai" to secureKeyStore.getApiKey("openai"),
-                    "claude" to secureKeyStore.getApiKey("claude"),
-                    "openrouter" to secureKeyStore.getApiKey("openrouter")
-                )
+                val taskAssignments = preferencesManager.taskAssignments.firstOrNull() ?: emptyMap()
+                val openAiKey = secureKeyStore.getApiKey("openai")
 
                 // Roteia requisição pelo Smart Router
-                val response = router.routeRequest(
+                val responseBuilder = StringBuilder()
+                router.routeAndExecute(
                     prompt = commandText,
                     history = emptyList(),
-                    apiKeys = apiKeys,
-                    enabledProviders = enabledProviders,
-                    selectedModels = selectedModels,
-                    routingMode = routingMode,
-                    preferredProvider = preferredProvider,
+                    attachment = null,
+                    overrideLevel = null,
+                    taskAssignments = taskAssignments,
+                    enabledProviderIds = enabledProviders,
                     multiAgentMode = multiAgentMode,
+                    isMultiAgentEnabled = isMultiAgent,
+                    routingMode = routingMode,
+                    preferredProviderId = preferredProvider,
+                    manualProviderId = manualOverride,
+                    selectedModels = selectedModels,
                     financialPolicy = financialPolicy,
-                    monthlyBudget = monthlyBudget,
                     currentSpend = currentSpend,
-                    onSpendTracked = { addedCost ->
-                        serviceScope.launch { preferencesManager.addSpend(addedCost) }
-                    }
-                )
+                    monthlyBudget = monthlyBudget,
+                    openAiApiKey = openAiKey
+                ).collect { chunk ->
+                    responseBuilder.append(chunk)
+                }
+
+                val finalResponse = responseBuilder.toString().ifBlank {
+                    "Comando processado com sucesso pelo Jarvis."
+                }
 
                 // Salva resposta do assistente no banco
                 chatRepository.saveAssistantMessage(
                     conversationId = targetConversationId,
-                    content = response.content,
-                    provider = response.provider,
-                    model = response.model,
-                    agentName = response.agentName,
-                    estimatedCostUsd = response.estimatedCostUsd,
-                    routingReason = response.routingReason
+                    content = finalResponse
                 )
 
                 // Lendo a resposta em voz alta se habilitado
                 val isTtsEnabled = preferencesManager.isTtsEnabled.firstOrNull() ?: true
                 if (isTtsEnabled) {
-                    speakResponseAndResume(response.content)
+                    speakResponseAndResume(finalResponse)
                 } else {
                     // Retorna à escuta da palavra-chave
                     transitionToWakeWordListening()

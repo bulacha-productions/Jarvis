@@ -362,7 +362,7 @@ fun SettingsScreen(
 
             // SEÇÃO 5: SISTEMA DE VOZ & ATIVAÇÃO POR PALAVRA-CHAVE ("JARVIS")
             item {
-                SectionHeader(title = "SISTEMA DE VOZ & WAKE WORD ("JARVIS")", icon = Icons.Default.RecordVoiceOver)
+                SectionHeader(title = "SISTEMA DE VOZ & WAKE WORD (\"JARVIS\")", icon = Icons.Default.RecordVoiceOver)
             }
             item {
                 Card(
@@ -429,7 +429,7 @@ fun SettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(text = "Ativação Contínua por Palavra-Chave", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    text = "Permite chamar o assistente dizendo "Jarvis" mesmo com o app em segundo plano ou tela bloqueada.",
+                                    text = "Permite chamar o assistente dizendo \"Jarvis\" mesmo com o app em segundo plano ou tela bloqueada.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -451,7 +451,7 @@ fun SettingsScreen(
                                 Text(text = "Palavra-Chave:", style = MaterialTheme.typography.labelMedium)
                                 Surface(color = ElectricOrange.copy(alpha = 0.2f), shape = RoundedCornerShape(6.dp)) {
                                     Text(
-                                        text = ""Jarvis"",
+                                        text = "\"Jarvis\"",
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                         fontWeight = FontWeight.Bold,
                                         color = ElectricOrange,
