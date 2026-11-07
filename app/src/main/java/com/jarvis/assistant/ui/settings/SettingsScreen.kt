@@ -491,7 +491,7 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Confirmação Verbal ("Estou ouvindo")", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(text = "Confirmação Verbal (\"Estou ouvindo\")", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                                 Text(text = "Jarvis responde verbalmente ao ouvir a palavra-chave.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
