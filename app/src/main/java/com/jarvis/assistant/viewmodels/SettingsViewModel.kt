@@ -104,7 +104,9 @@ class SettingsViewModel(
 
     val isTtsAutoSpeak = preferencesManager.isTtsAutoSpeak.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000)
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = false
+    )
 
     // V3.1.0: Sistema de Voz e Wake Word
     val voiceState = JarvisVoiceService.voiceState
@@ -127,9 +129,6 @@ class SettingsViewModel(
 
     private val _isVoiceDiagnosticsOpen = MutableStateFlow(false)
     val isVoiceDiagnosticsOpen = _isVoiceDiagnosticsOpen.asStateFlow()
-,
-        initialValue = false
-    )
 
     val aiLevel = preferencesManager.aiLevel.stateIn(
         scope = viewModelScope,
