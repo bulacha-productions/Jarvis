@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -276,6 +277,26 @@ class SettingsViewModel(
     fun setManualProviderOverride(providerId: String?) {
         viewModelScope.launch {
             preferencesManager.setManualProvider(providerId)
+        }
+    }
+
+
+    fun updateAILevel(level: AILevel) = setAILevel(level)
+    fun toggleTheme(enabled: Boolean) = setDarkTheme(enabled)
+
+    fun saveTaskAssignments(assignments: Map<String, TaskAssignment>) {
+        viewModelScope.launch {
+            preferencesManager.saveTaskAssignments(assignments)
+        }
+    }
+
+    fun setWizardOpen(isOpen: Boolean) {
+        _uiState.update { it.copy(isWizardOpen = isOpen) }
+    }
+
+    fun addCustomModel(providerId: String, modelId: String, modelName: String, level: AILevel, capabilities: Set<String>) {
+        viewModelScope.launch {
+            selectModel(providerId, modelId)
         }
     }
 
