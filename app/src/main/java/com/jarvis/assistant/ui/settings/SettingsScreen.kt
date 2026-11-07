@@ -1,3 +1,5 @@
+package com.jarvis.assistant.ui.settings
+
 
 import com.jarvis.assistant.domain.model.RoutingMode
 import com.jarvis.assistant.domain.model.MultiAgentMode
@@ -5,7 +7,6 @@ import com.jarvis.assistant.domain.model.FinancialPolicy
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SmartToy
-package com.jarvis.assistant.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
