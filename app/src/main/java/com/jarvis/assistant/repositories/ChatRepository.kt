@@ -8,6 +8,7 @@ import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Conversation
 import com.jarvis.assistant.domain.model.Message
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 
@@ -21,7 +22,8 @@ class ChatRepository(
         }
     }
 
-    fun getMessages(conversationId: String): Flow<List<Message>> {
+    fun getMessages(conversationId: String?): Flow<List<Message>> {
+        if (conversationId.isNullOrBlank()) return flowOf(emptyList())
         return messageDao.getMessagesForConversation(conversationId).map { entities ->
             entities.map { entity ->
                 val attachment = if (entity.attachmentName != null && entity.attachmentMimeType != null) {
@@ -46,30 +48,58 @@ class ChatRepository(
         }
     }
 
-    suspend fun createNewConversation(title: String = "Nova Conversa"): String {
-        val newId = UUID.randomUUID().toString()
-        val conversation = ConversationEntity(
-            id = newId,
-            title = title,
-            lastActivityTimestamp = System.currentTimeMillis()
-        )
-        conversationDao.insertConversation(conversation)
-        return newId
+    /**
+     * Limpeza segura que remove apenas conversas residuais vazias (0 mensagens).
+     */
+    suspend fun cleanupEmptyConversations() {
+        try {
+            conversationDao.deleteEmptyConversations()
+        } catch (_: Exception) {}
     }
 
     suspend fun deleteConversation(conversationId: String) {
         conversationDao.deleteConversationById(conversationId)
     }
 
+    suspend fun pruneMessagesFromTimestamp(conversationId: String, timestamp: Long) {
+        messageDao.deleteMessagesFromTimestamp(conversationId, timestamp)
+    }
+
+    /**
+     * Criação tardia (Lazy Creation): A conversa só é persistida no Room DB quando a primeira mensagem é enviada!
+     */
     suspend fun saveUserMessage(
-        conversationId: String,
+        targetConversationId: String?,
         content: String,
         attachment: Attachment? = null
-    ): Message {
+    ): Pair<String, Message> {
         val now = System.currentTimeMillis()
+        val convId = if (targetConversationId.isNullOrBlank()) UUID.randomUUID().toString() else targetConversationId
+
+        val existing = conversationDao.getConversationById(convId)
+        val titleSnippet = content.take(32).trim() + if (content.length > 32) "..." else ""
+        val finalTitle = if (titleSnippet.isNotBlank()) titleSnippet else "Nova Conversa"
+
+        if (existing == null) {
+            // Conversa criada no primeiro envio
+            conversationDao.insertConversation(
+                ConversationEntity(
+                    id = convId,
+                    title = finalTitle,
+                    lastActivityTimestamp = now
+                )
+            )
+        } else {
+            val count = messageDao.getMessageCount(convId)
+            val updatedTitle = if (count == 0 && (existing.title == "Nova Conversa" || existing.title.isBlank())) {
+                finalTitle
+            } else existing.title
+            conversationDao.updateConversation(convId, updatedTitle, now)
+        }
+
         val message = MessageEntity(
             id = UUID.randomUUID().toString(),
-            conversationId = conversationId,
+            conversationId = convId,
             content = content,
             isFromUser = true,
             timestamp = now,
@@ -78,38 +108,18 @@ class ChatRepository(
             attachmentSize = attachment?.sizeBytes,
             attachmentUri = attachment?.uriString
         )
-
-        // Ensure parent conversation exists first
-        val existing = conversationDao.getConversationById(conversationId)
-        if (existing == null) {
-            val titleSnippet = content.take(30).trim() + if (content.length > 30) "..." else ""
-            conversationDao.insertConversation(
-                ConversationEntity(
-                    id = conversationId,
-                    title = if (titleSnippet.isNotBlank()) titleSnippet else "Nova Conversa",
-                    lastActivityTimestamp = now
-                )
-            )
-        } else {
-            // In-place update to prevent SQLite ON DELETE CASCADE!
-            val count = messageDao.getMessageCount(conversationId)
-            val updatedTitle = if (count == 0 && (existing.title == "Nova Conversa" || existing.title.isBlank())) {
-                content.take(30).trim() + if (content.length > 30) "..." else ""
-            } else existing.title
-
-            conversationDao.updateConversation(conversationId, updatedTitle, now)
-        }
-
         messageDao.insertMessage(message)
 
-        return Message(
+        val domainMsg = Message(
             id = message.id,
-            conversationId = message.conversationId,
+            conversationId = convId,
             content = message.content,
-            isFromUser = message.isFromUser,
+            isFromUser = true,
             timestamp = message.timestamp,
             attachment = attachment
         )
+
+        return Pair(convId, domainMsg)
     }
 
     suspend fun saveAssistantMessage(conversationId: String, content: String): Message {

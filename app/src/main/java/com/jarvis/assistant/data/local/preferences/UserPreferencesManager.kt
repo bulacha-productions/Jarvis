@@ -1,14 +1,9 @@
 package com.jarvis.assistant.data.local.preferences
 
 import android.content.Context
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
-import com.jarvis.assistant.domain.model.AILevel
-import com.jarvis.assistant.domain.model.ModelTask
-import com.jarvis.assistant.domain.model.TaskAssignment
+import com.jarvis.assistant.domain.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -25,12 +20,57 @@ class UserPreferencesManager(private val context: Context) {
     private val KEY_MANUAL_PROVIDER = stringPreferencesKey("pref_manual_provider_v2_0_2")
     private val KEY_SELECTED_MODELS = stringPreferencesKey("pref_selected_models_v2_0_2")
 
+    // Novas chaves da V3.0.0
+    private val KEY_ROUTING_MODE = stringPreferencesKey("pref_routing_mode_v3_0_0")
+    private val KEY_PREFERRED_PROVIDER = stringPreferencesKey("pref_preferred_provider_v3_0_0")
+    private val KEY_MULTI_AGENT_MODE = stringPreferencesKey("pref_multi_agent_mode_v3_0_0")
+    private val KEY_FINANCIAL_POLICY = stringPreferencesKey("pref_financial_policy_v3_0_0")
+    private val KEY_MONTHLY_BUDGET = doublePreferencesKey("pref_monthly_budget_v3_0_0")
+    private val KEY_CURRENT_SPEND = doublePreferencesKey("pref_current_spend_v3_0_0")
+    private val KEY_TTS_ENABLED = booleanPreferencesKey("pref_tts_enabled_v3_0_0")
+    private val KEY_TTS_AUTO_SPEAK = booleanPreferencesKey("pref_tts_auto_speak_v3_0_0")
+
     val isDarkTheme: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_DARK_THEME] ?: true
     }
 
     val isMultiAgentEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_MULTI_AGENT_ENABLED] ?: true
+    }
+
+    val multiAgentMode: Flow<MultiAgentMode> = context.dataStore.data.map { preferences ->
+        val raw = preferences[KEY_MULTI_AGENT_MODE] ?: MultiAgentMode.AUTOMATIC.name
+        try { MultiAgentMode.valueOf(raw) } catch (_: Exception) { MultiAgentMode.AUTOMATIC }
+    }
+
+    val routingMode: Flow<RoutingMode> = context.dataStore.data.map { preferences ->
+        val raw = preferences[KEY_ROUTING_MODE] ?: RoutingMode.AUTOMATIC.name
+        try { RoutingMode.valueOf(raw) } catch (_: Exception) { RoutingMode.AUTOMATIC }
+    }
+
+    val preferredProvider: Flow<String?> = context.dataStore.data.map { preferences ->
+        preferences[KEY_PREFERRED_PROVIDER]
+    }
+
+    val financialPolicy: Flow<FinancialPolicy> = context.dataStore.data.map { preferences ->
+        val raw = preferences[KEY_FINANCIAL_POLICY] ?: FinancialPolicy.FREE_ONLY.name
+        try { FinancialPolicy.valueOf(raw) } catch (_: Exception) { FinancialPolicy.FREE_ONLY }
+    }
+
+    val monthlyBudget: Flow<Double> = context.dataStore.data.map { preferences ->
+        preferences[KEY_MONTHLY_BUDGET] ?: 5.0
+    }
+
+    val currentSpend: Flow<Double> = context.dataStore.data.map { preferences ->
+        preferences[KEY_CURRENT_SPEND] ?: 0.0
+    }
+
+    val isTtsEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_TTS_ENABLED] ?: true
+    }
+
+    val isTtsAutoSpeak: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_TTS_AUTO_SPEAK] ?: false
     }
 
     val manualProviderOverride: Flow<String?> = context.dataStore.data.map { preferences ->
@@ -61,6 +101,56 @@ class UserPreferencesManager(private val context: Context) {
             val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
             json.put(providerId, modelId)
             preferences[KEY_SELECTED_MODELS] = json.toString()
+        }
+    }
+
+    suspend fun setRoutingMode(mode: RoutingMode) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_ROUTING_MODE] = mode.name
+        }
+    }
+
+    suspend fun setPreferredProvider(providerId: String?) {
+        context.dataStore.edit { preferences ->
+            if (providerId.isNullOrBlank()) preferences.remove(KEY_PREFERRED_PROVIDER)
+            else preferences[KEY_PREFERRED_PROVIDER] = providerId
+        }
+    }
+
+    suspend fun setMultiAgentMode(mode: MultiAgentMode) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_MULTI_AGENT_MODE] = mode.name
+        }
+    }
+
+    suspend fun setFinancialPolicy(policy: FinancialPolicy) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_FINANCIAL_POLICY] = policy.name
+        }
+    }
+
+    suspend fun setMonthlyBudget(budget: Double) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_MONTHLY_BUDGET] = budget
+        }
+    }
+
+    suspend fun addSpend(amount: Double) {
+        context.dataStore.edit { preferences ->
+            val cur = preferences[KEY_CURRENT_SPEND] ?: 0.0
+            preferences[KEY_CURRENT_SPEND] = (cur + amount).coerceAtLeast(0.0)
+        }
+    }
+
+    suspend fun setTtsEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_TTS_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setTtsAutoSpeak(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_TTS_AUTO_SPEAK] = enabled
         }
     }
 
@@ -149,7 +239,6 @@ class UserPreferencesManager(private val context: Context) {
                 val task = ModelTask.values().find { it.id == taskId } ?: ModelTask.GENERAL_CHAT
                 val providerId = obj.getString("providerId")
                 var modelName = obj.getString("modelName")
-                // Apenas remove gemini-1.5 legado se existir de versões muito antigas; preserva gemini-2.0, gemini-2.5, etc.
                 if (modelName.contains("gemini-1.5")) {
                     modelName = "gemini-2.5-flash"
                 }

@@ -10,6 +10,24 @@ enum class ModelCapability(val displayName: String) {
     TOOLS("Chamada de Ferramentas")
 }
 
+enum class RoutingMode(val displayName: String, val description: String) {
+    AUTOMATIC("Automático", "O Smart Router seleciona dinamicamente o provedor e modelo ideais."),
+    MANUAL("Manual", "Você define diretamente o provedor e modelo de sua preferência."),
+    AUTOMATIC_WITH_PREFERENCE("Automático com Preferência", "Prioriza seu provedor favorito, alternando apenas se necessário.")
+}
+
+enum class MultiAgentMode(val displayName: String, val description: String) {
+    ONE_AGENT("Um Especialista", "Uma IA especialista responde diretamente com baixa latência."),
+    TWO_AGENTS("Dois Especialistas", "Dois especialistas colaboram e o Jarvis Central consolida a resposta."),
+    AUTOMATIC("Automático", "O Smart Router decide a quantidade de agentes conforme a complexidade da tarefa.")
+}
+
+enum class FinancialPolicy(val displayName: String, val description: String) {
+    FREE_ONLY("Somente Gratuitos", "Bloqueia requisições pagas. Utiliza estritamente modelos gratuitos oficiais."),
+    PRIORITIZE_FREE("Priorizar Gratuitos", "Utiliza modelos gratuitos e requer autorização antes de chamar modelos pagos."),
+    FREE_AND_PAID("Gratuitos e Pagos", "Permite modelos pagos respeitando o teto de orçamento mensal configurado.")
+}
+
 data class AIModelInfo(
     val id: String,
     val displayName: String,
@@ -18,7 +36,27 @@ data class AIModelInfo(
     val capabilities: Set<ModelCapability>,
     val isEnabled: Boolean = true,
     val isAvailable: Boolean = true,
-    val description: String = ""
+    val description: String = "",
+    val contextLength: Int? = null,
+    val promptPricePerMillion: Double? = null,
+    val completionPricePerMillion: Double? = null,
+    val isFree: Boolean = false,
+    val inputModalities: List<String> = listOf("text"),
+    val outputModalities: List<String> = listOf("text"),
+    val supportsMultiturn: Boolean = true,
+    val supportsTools: Boolean = false,
+    val organization: String? = null
+)
+
+data class SmartRoutingDecision(
+    val providerId: String,
+    val modelId: String,
+    val agentName: String,
+    val reason: String,
+    val isAutomatic: Boolean = true,
+    val wasFallback: Boolean = false,
+    val estimatedCostUsd: Double = 0.0,
+    val isFree: Boolean = true
 )
 
 enum class ModelTask(

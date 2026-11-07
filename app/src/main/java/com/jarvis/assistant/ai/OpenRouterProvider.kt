@@ -12,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,10 +25,8 @@ import java.util.concurrent.TimeUnit
 
 class OpenRouterProvider(
     private val context: Context? = null,
-    private val apiKeyProvider: suspend () -> String
+    private val apiKeyProvider: () -> String
 ) : AIProvider {
-
-    constructor(apiKeyProvider: suspend () -> String) : this(null, apiKeyProvider)
 
     override val id: String = "openrouter"
     override val type: ProviderType = ProviderType.OPENROUTER
@@ -38,7 +35,6 @@ class OpenRouterProvider(
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     companion object {
@@ -52,43 +48,33 @@ class OpenRouterProvider(
                     402 -> "Créditos insuficientes na conta OpenRouter (HTTP 402)."
                     403 -> "Acesso proibido pela OpenRouter (HTTP 403)."
                     404 -> "Endpoint ou modelo OpenRouter não encontrado (HTTP 404)."
-                    429 -> "Limite de requisições excedido na OpenRouter (HTTP 429)."
-                    500, 502, 503 -> "Servidor OpenRouter indisponível no momento (HTTP $httpCode)."
-                    else -> "Erro HTTP $httpCode na API OpenRouter."
+                    429 -> "Limite de taxa atingido na OpenRouter (HTTP 429). Aguarde alguns instantes."
+                    500, 502, 503 -> "Servidor da OpenRouter temporariamente indisponível (HTTP $httpCode)."
+                    else -> "Erro na requisição OpenRouter (HTTP $httpCode)."
                 }
             }
             return try {
                 val json = JSONObject(errorBody)
-                if (json.has("error")) {
-                    val err = json.optJSONObject("error")
-                    if (err != null) {
-                        err.optString("message", errorBody)
-                    } else {
-                        json.optString("error", errorBody)
-                    }
-                } else if (json.has("message")) {
-                    json.optString("message", errorBody)
-                } else {
-                    errorBody.take(300)
-                }
-            } catch (e: Exception) {
-                errorBody.take(300)
+                val errorObj = json.optJSONObject("error")
+                val message = errorObj?.optString("message") ?: json.optString("message", "")
+                if (message.isNotBlank()) message else "Erro HTTP $httpCode: $errorBody"
+            } catch (_: Exception) {
+                errorBody.take(200)
             }
         }
     }
 
     override suspend fun isAvailable(): Boolean {
-        val key = apiKeyProvider()
-        return key.trim().isNotBlank()
+        return apiKeyProvider().isNotBlank()
     }
 
-    override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult = withContext(Dispatchers.IO) {
+    override suspend fun testConnection(apiKey: String, baseUrl: String): ConnectionTestResult {
         val trimmedKey = apiKey.trim()
         if (trimmedKey.isBlank()) {
-            return@withContext ConnectionTestResult(
+            return ConnectionTestResult(
                 isSuccess = false,
-                statusCode = 0,
-                message = "Chave de API OpenRouter não configurada."
+                statusCode = 400,
+                message = "Chave de API OpenRouter não informada."
             )
         }
 
@@ -100,32 +86,25 @@ class OpenRouterProvider(
             .get()
             .build()
 
-        try {
+        return try {
             client.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: ""
+                val bodyStr = response.body?.string() ?: ""
                 if (response.isSuccessful) {
                     val modelsResult = queryRemoteModels(trimmedKey, baseUrl)
-                    val discovered = modelsResult.getOrDefault(emptyList())
-                    val keyInfo = try {
-                        val json = JSONObject(body)
-                        val data = json.optJSONObject("data")
-                        val label = data?.optString("label") ?: "Conta Ativa"
-                        " ($label)"
-                    } catch (e: Exception) {
-                        ""
-                    }
+                    val models = modelsResult.getOrNull() ?: emptyList()
+                    val freeCount = models.count { it.isFree }
                     ConnectionTestResult(
                         isSuccess = true,
                         statusCode = response.code,
-                        message = "Conexão OpenRouter estabelecida com sucesso!$keyInfo ${discovered.size} modelos disponíveis.",
-                        discoveredModels = discovered
+                        message = "Conexão OpenRouter bem-sucedida! ${models.size} modelos catalogados ($freeCount gratuitos).",
+                        discoveredModels = models
                     )
                 } else {
-                    val errMsg = extractErrorMessage(body, response.code)
+                    val errorMsg = extractErrorMessage(bodyStr, response.code)
                     ConnectionTestResult(
                         isSuccess = false,
                         statusCode = response.code,
-                        message = "Falha na autenticação OpenRouter (HTTP ${response.code}): $errMsg"
+                        message = "Falha OpenRouter [HTTP ${response.code}]: $errorMsg"
                     )
                 }
             }
@@ -133,61 +112,83 @@ class OpenRouterProvider(
             ConnectionTestResult(
                 isSuccess = false,
                 statusCode = 0,
-                message = "Erro de rede ao conectar com OpenRouter: ${e.message ?: "Conexão recusada"}"
+                message = "Erro de rede com OpenRouter: ${e.message ?: "Conexão falhou"}"
             )
         }
     }
 
-    override suspend fun queryRemoteModels(apiKey: String, baseUrl: String): Result<List<AIModelInfo>> = withContext(Dispatchers.IO) {
+    override suspend fun queryRemoteModels(apiKey: String, baseUrl: String): Result<List<AIModelInfo>> {
         val trimmedKey = apiKey.trim()
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$BASE_URL/models")
-            .header("Authorization", "Bearer $trimmedKey")
             .header("HTTP-Referer", "https://github.com/bulacha-productions/Jarvis")
             .header("X-Title", "Jarvis Assistant")
             .get()
-            .build()
 
-        try {
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: ""
+        if (trimmedKey.isNotBlank()) {
+            requestBuilder.header("Authorization", "Bearer $trimmedKey")
+        }
+
+        return try {
+            client.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val errMsg = extractErrorMessage(body, response.code)
-                    return@withContext Result.failure(Exception("HTTP ${response.code}: $errMsg"))
+                    return Result.failure(Exception("HTTP ${response.code}: Falha ao consultar catálogo OpenRouter"))
                 }
-
-                val json = JSONObject(body)
-                val data = json.optJSONArray("data") ?: JSONArray()
+                val bodyStr = response.body?.string() ?: "{}"
+                val root = JSONObject(bodyStr)
+                val data = root.optJSONArray("data") ?: JSONArray()
                 val models = mutableListOf<AIModelInfo>()
 
                 for (i in 0 until data.length()) {
-                    val item = data.optJSONObject(i) ?: continue
-                    val modelId = item.optString("id", "").trim()
+                    val obj = data.getJSONObject(i)
+                    val modelId = obj.optString("id", "").trim()
                     if (modelId.isBlank()) continue
 
-                    val modelName = item.optString("name", modelId)
-                    val description = item.optString("description", "")
-                    val pricing = item.optJSONObject("pricing")
-                    val isFree = modelId.endsWith(":free") || (pricing != null &&
-                            pricing.optDouble("prompt", 1.0) == 0.0 &&
-                            pricing.optDouble("completion", 1.0) == 0.0)
+                    val modelName = obj.optString("name", modelId).trim()
+                    val description = obj.optString("description", "")
+                    val contextLength = obj.optInt("context_length", 8192)
+
+                    // Precificação em USD por token convertida para USD por milhão de tokens
+                    val pricing = obj.optJSONObject("pricing")
+                    val promptPricePerToken = pricing?.optDouble("prompt", 0.0) ?: 0.0
+                    val completionPricePerToken = pricing?.optDouble("completion", 0.0) ?: 0.0
+                    val promptPricePerMillion = promptPricePerToken * 1_000_000.0
+                    val completionPricePerMillion = completionPricePerToken * 1_000_000.0
+
+                    val isFree = modelId.endsWith(":free") || (promptPricePerToken == 0.0 && completionPricePerToken == 0.0)
+
+                    // Arquitetura e Modalidades (Texto, Visão, Imagem)
+                    val arch = obj.optJSONObject("architecture")
+                    val modality = arch?.optString("modality", "text->text") ?: "text->text"
+                    val inputModalities = mutableListOf("text")
+                    if (modality.contains("image", ignoreCase = true)) {
+                        inputModalities.add("image")
+                    }
+
+                    // Organização (Meta, Google, Mistral, Anthropic, OpenAI, DeepSeek, Qwen, Cohere, etc.)
+                    val org = if (modelId.contains("/")) modelId.substringBefore("/") else "OpenRouter"
 
                     val capabilities = mutableSetOf(ModelCapability.TEXT)
-                    val architecture = item.optJSONObject("architecture")
-                    val modality = architecture?.optString("modality", "") ?: ""
-                    if (modality.contains("image") || modality.contains("multimodal")) {
+                    if (inputModalities.contains("image")) {
                         capabilities.add(ModelCapability.IMAGE_ANALYSIS)
                     }
-                    if (modelId.contains("code") || modelId.contains("coder") || modelId.contains("deepseek")) {
+                    if (modelId.contains("code", ignoreCase = true) || modelId.contains("coder", ignoreCase = true) ||
+                        modelId.contains("deepseek", ignoreCase = true) || modelId.contains("qwen", ignoreCase = true) ||
+                        modelId.contains("llama-3", ignoreCase = true)) {
                         capabilities.add(ModelCapability.CODING)
                     }
-                    if (modelId.contains("70b") || modelId.contains("r1") || modelId.contains("claude") || modelId.contains("gpt-4")) {
+                    if (modelId.contains("r1", ignoreCase = true) || modelId.contains("reason", ignoreCase = true) ||
+                        modelId.contains("o1", ignoreCase = true) || modelId.contains("70b", ignoreCase = true)) {
                         capabilities.add(ModelCapability.REASONING)
+                    }
+                    if (contextLength >= 32000) {
+                        capabilities.add(ModelCapability.LONG_CONTEXT)
                     }
 
                     val level = when {
+                        isFree && (modelId.contains("70b") || modelId.contains("r1")) -> AILevel.HIGH
                         isFree -> AILevel.MEDIUM
-                        modelId.contains("70b") || modelId.contains("r1") || modelId.contains("pro") || modelId.contains("sonnet") -> AILevel.HIGH
+                        modelId.contains("70b") || modelId.contains("r1") || modelId.contains("pro") || modelId.contains("sonnet") || modelId.contains("4o") -> AILevel.HIGH
                         modelId.contains("flash") || modelId.contains("mini") || modelId.contains("8b") -> AILevel.LIGHT
                         else -> AILevel.MEDIUM
                     }
@@ -205,16 +206,24 @@ class OpenRouterProvider(
                             providerId = id,
                             defaultLevel = level,
                             capabilities = capabilities,
-                            description = description.take(200)
+                            description = description.take(250),
+                            contextLength = contextLength,
+                            promptPricePerMillion = promptPricePerMillion,
+                            completionPricePerMillion = completionPricePerMillion,
+                            isFree = isFree,
+                            inputModalities = inputModalities,
+                            outputModalities = listOf("text"),
+                            organization = org
                         )
                     )
                 }
 
+                // Ordenar: primeiro o default free, depois modelos gratuitos (:free), depois por organização/nome
                 models.sortWith(Comparator { a, b ->
                     if (a.id == DEFAULT_FREE_MODEL) return@Comparator -1
                     if (b.id == DEFAULT_FREE_MODEL) return@Comparator 1
-                    if (a.id.endsWith(":free") && !b.id.endsWith(":free")) return@Comparator -1
-                    if (!a.id.endsWith(":free") && b.id.endsWith(":free")) return@Comparator 1
+                    if (a.isFree && !b.isFree) return@Comparator -1
+                    if (!a.isFree && b.isFree) return@Comparator 1
                     a.displayName.compareTo(b.displayName)
                 })
 
@@ -231,7 +240,7 @@ class OpenRouterProvider(
             val remote = queryRemoteModels(key).getOrNull()
             if (!remote.isNullOrEmpty()) {
                 val filtered = remote.filter { it.defaultLevel == level }
-                return if (filtered.isNotEmpty()) filtered else remote.take(15)
+                return if (filtered.isNotEmpty()) filtered else remote.take(25)
             }
         }
         return listOf(
@@ -241,15 +250,9 @@ class OpenRouterProvider(
                 providerId = id,
                 defaultLevel = AILevel.HIGH,
                 capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING),
-                description = "Meta Llama 3.3 70B via OpenRouter Free Tier"
-            ),
-            AIModelInfo(
-                id = "google/gemini-2.5-flash",
-                displayName = "Gemini 2.5 Flash (OpenRouter)",
-                providerId = id,
-                defaultLevel = AILevel.MEDIUM,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.IMAGE_ANALYSIS),
-                description = "Google Gemini 2.5 Flash via OpenRouter"
+                description = "Meta Llama 3.3 70B via OpenRouter Free Tier",
+                isFree = true,
+                organization = "meta-llama"
             ),
             AIModelInfo(
                 id = "deepseek/deepseek-r1:free",
@@ -257,7 +260,39 @@ class OpenRouterProvider(
                 providerId = id,
                 defaultLevel = AILevel.HIGH,
                 capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.REASONING),
-                description = "DeepSeek R1 Reasoning via OpenRouter Free Tier"
+                description = "DeepSeek R1 Reasoning via OpenRouter Free Tier",
+                isFree = true,
+                organization = "deepseek"
+            ),
+            AIModelInfo(
+                id = "google/gemini-2.0-flash-exp:free",
+                displayName = "Gemini 2.0 Flash Exp (Free)",
+                providerId = id,
+                defaultLevel = AILevel.MEDIUM,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING, ModelCapability.IMAGE_ANALYSIS),
+                description = "Google Gemini 2.0 Flash Experimental via OpenRouter Free Tier",
+                isFree = true,
+                organization = "google"
+            ),
+            AIModelInfo(
+                id = "qwen/qwen-2.5-coder-32b-instruct:free",
+                displayName = "Qwen 2.5 Coder 32B (Free)",
+                providerId = id,
+                defaultLevel = AILevel.HIGH,
+                capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING),
+                description = "Alibaba Qwen 2.5 Coder 32B via OpenRouter Free Tier",
+                isFree = true,
+                organization = "qwen"
+            ),
+            AIModelInfo(
+                id = "mistralai/mistral-7b-instruct:free",
+                displayName = "Mistral 7B Instruct (Free)",
+                providerId = id,
+                defaultLevel = AILevel.LIGHT,
+                capabilities = setOf(ModelCapability.TEXT),
+                description = "Mistral 7B Instruct via OpenRouter Free Tier",
+                isFree = true,
+                organization = "mistralai"
             )
         )
     }
@@ -303,7 +338,7 @@ class OpenRouterProvider(
                 val contentArray = JSONArray()
                 val textPart = JSONObject()
                 textPart.put("type", "text")
-                textPart.put("text", prompt.ifBlank { "Analise a imagem em anexo." })
+                textPart.put("text", prompt.ifBlank { "Analise o anexo." })
                 contentArray.put(textPart)
 
                 val imagePart = JSONObject()
@@ -321,6 +356,7 @@ class OpenRouterProvider(
         } else {
             currentUserMsg.put("content", prompt)
         }
+
         messagesArray.put(currentUserMsg)
 
         val requestBodyJson = JSONObject()
@@ -329,7 +365,6 @@ class OpenRouterProvider(
         requestBodyJson.put("stream", true)
 
         val body = requestBodyJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-
         val request = Request.Builder()
             .url("$BASE_URL/chat/completions")
             .header("Authorization", "Bearer $key")
@@ -360,7 +395,6 @@ class OpenRouterProvider(
                         val data = currentLine.removePrefix("data: ").trim()
                         if (data == "[DONE]") break
                         if (data.isBlank()) continue
-
                         try {
                             val chunkJson = JSONObject(data)
                             val choices = chunkJson.optJSONArray("choices")

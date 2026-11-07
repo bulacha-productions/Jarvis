@@ -1,10 +1,13 @@
 package com.jarvis.assistant.ui.chat
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
@@ -30,14 +34,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.audio.VoiceRecognitionManager
 import com.jarvis.assistant.audio.VoiceState
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Message
 import com.jarvis.assistant.ui.components.JarvisMascot
-import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.viewmodels.ChatViewModel
 import java.io.File
@@ -50,13 +55,24 @@ import java.util.*
 fun ChatScreen(
     viewModel: ChatViewModel,
     onNavigateToHistory: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    conversationId: String? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
-    // Voice Manager instance
+    LaunchedEffect(conversationId) {
+        viewModel.loadConversation(conversationId)
+    }
+
+    LaunchedEffect(uiState.messages.size, uiState.isSending) {
+        if (uiState.messages.isNotEmpty()) {
+            listState.animateScrollToItem(uiState.messages.size - 1)
+        }
+    }
+
+    // Voice Recognition Manager
     val voiceManager = remember { VoiceRecognitionManager(context) }
     val voiceState by voiceManager.voiceState.collectAsState()
 
@@ -66,164 +82,135 @@ fun ChatScreen(
         }
     }
 
-    // Audio Permission Launcher
     val audioPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
             voiceManager.startListening(
                 onPartial = { partial ->
-                    viewModel.onInputTextChanged(partial)
+                    if (partial.isNotBlank()) viewModel.onInputTextChanged(partial)
                 },
                 onResult = { text ->
-                    val current = uiState.inputText
-                    viewModel.onInputTextChanged(if (current.isBlank()) text else "$current $text")
+                    if (text.isNotBlank()) {
+                        viewModel.onInputTextChanged(text)
+                        viewModel.sendMessage()
+                    }
                     viewModel.setRecordingVoice(false)
                 },
-                onError = {
+                onError = { err ->
+                    Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                     viewModel.setRecordingVoice(false)
                 }
             )
             viewModel.setRecordingVoice(true)
         } else {
-            viewModel.setRecordingVoice(false)
+            Toast.makeText(context, "Permissão de microfone necessária para falar com o Jarvis.", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // 1. Camera Capture Launcher
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            // Camera permission granted
-        }
-    }
-
-    val takePictureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        bitmap?.let {
-            val file = File(context.cacheDir, "camera_photo_${System.currentTimeMillis()}.jpg")
-            FileOutputStream(file).use { out ->
-                it.compress(Bitmap.CompressFormat.JPEG, 90, out)
-            }
-            viewModel.setAttachedFile(
-                Attachment(
-                    id = UUID.randomUUID().toString(),
-                    name = "Foto_${System.currentTimeMillis()}.jpg",
-                    mimeType = "image/jpeg",
-                    sizeBytes = file.length(),
-                    uriString = Uri.fromFile(file).toString()
-                )
-            )
-        }
-    }
-
-    // 2. Photos Picker Launcher (Images only)
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
+        ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.setAttachedFile(
-                Attachment(
-                    id = UUID.randomUUID().toString(),
-                    name = it.lastPathSegment ?: "imagem.jpg",
-                    mimeType = context.contentResolver.getType(it) ?: "image/jpeg",
-                    sizeBytes = 2048L,
-                    uriString = it.toString()
-                )
+            val contentResolver = context.contentResolver
+            val type = contentResolver.getType(it) ?: "image/jpeg"
+            val attachment = Attachment(
+                id = UUID.randomUUID().toString(),
+                name = "foto_${System.currentTimeMillis()}.jpg",
+                mimeType = type,
+                sizeBytes = 1024L,
+                uriString = it.toString()
             )
+            viewModel.setAttachedFile(attachment)
         }
     }
 
-    // 3. Document/File Picker Launcher (PDF, TXT, DOCX)
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+    val docPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            val mime = context.contentResolver.getType(it) ?: "application/octet-stream"
-            viewModel.setAttachedFile(
-                Attachment(
-                    id = UUID.randomUUID().toString(),
-                    name = it.lastPathSegment ?: "documento",
-                    mimeType = mime,
-                    sizeBytes = 4096L,
-                    uriString = it.toString()
-                )
+            val contentResolver = context.contentResolver
+            val type = contentResolver.getType(it) ?: "application/pdf"
+            val attachment = Attachment(
+                id = UUID.randomUUID().toString(),
+                name = "documento_${System.currentTimeMillis()}",
+                mimeType = type,
+                sizeBytes = 2048L,
+                uriString = it.toString()
             )
-        }
-    }
-
-    LaunchedEffect(uiState.messages.size) {
-        if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.size - 1)
+            viewModel.setAttachedFile(attachment)
         }
     }
 
     Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding()
-            .navigationBarsPadding(),
         topBar = {
             TopAppBar(
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        JarvisMascot(size = 32.dp)
+                        JarvisMascot(isThinking = uiState.isSending, size = 36.dp)
                         Column {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    text = "JARVIS",
+                                    text = "Jarvis",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Surface(
-                                    color = ElectricOrange.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(
-                                        text = "v${JarvisVersion.VERSION_NAME}",
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = ElectricOrange,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(ElectricOrange)
-                                )
                                 Text(
-                                    text = uiState.activeProviderName,
+                                    text = "v${JarvisVersion.VERSION_NAME}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = ElectricOrange,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
+                            Text(
+                                text = if (uiState.isSending) "Coordenando tarefas..." else "Smart Router Ativo",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 },
                 actions = {
+                    // Botão Parar Leitura TTS se ativo
+                    if (uiState.isSpeakingTTS) {
+                        IconButton(onClick = { viewModel.stopSpeaking() }) {
+                            Icon(
+                                Icons.Default.VolumeOff,
+                                contentDescription = "Parar Leitura",
+                                tint = ElectricOrange
+                            )
+                        }
+                    }
+
+                    // Botão Nova Conversa (Criação tardia / Lazy)
                     IconButton(onClick = { viewModel.startNewChat() }) {
-                        Icon(Icons.Default.Add, contentDescription = "Nova Conversa", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(
+                            Icons.Default.AddComment,
+                            contentDescription = "Nova Conversa",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
+
                     IconButton(onClick = onNavigateToHistory) {
-                        Icon(Icons.Default.History, contentDescription = "Histórico", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(
+                            Icons.Default.History,
+                            contentDescription = "Histórico de Conversas",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
+
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Configurações", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Configurações",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -237,359 +224,268 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Main Feed Area
-            if (uiState.messages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
+            // Lista de Mensagens do Chat
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                if (uiState.messages.isEmpty() && !uiState.isSending) {
                     Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(24.dp)
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        JarvisMascot(size = 120.dp)
+                        JarvisMascot(isThinking = false, size = 72.dp)
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Como posso ajudar você hoje?",
+                            text = "Jarvis Neural Core v${JarvisVersion.VERSION_NAME}",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold,
+                            color = ElectricOrange
                         )
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Toque no botão + para Câmera, Fotos, Arquivos ou selecione a Capacidade.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Smart Router com roteamento dinâmico, colaboração multiagente, proteção financeira e renderização Markdown nativa.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp)
-                ) {
-                    items(uiState.messages, key = { it.id }) { msg ->
-                        MessageBubble(message = msg)
-                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        items(uiState.messages, key = { it.id }) { message ->
+                            MessageBubble(
+                                message = message,
+                                isSpeaking = uiState.isSpeakingTTS,
+                                onEdit = { viewModel.editUserMessage(message) },
+                                onSpeak = { viewModel.speakMessage(message.content) },
+                                onStopSpeak = { viewModel.stopSpeaking() }
+                            )
+                        }
 
-                    if (uiState.isSending) {
-                        item {
-                            ThinkingBubble(onCancel = { viewModel.cancelActiveRequest() })
+                        if (uiState.isSending) {
+                            item {
+                                ThinkingBubble(onCancel = { viewModel.cancelActiveRequest() })
+                            }
                         }
                     }
                 }
             }
 
-            // Voice Recording Bar
-            AnimatedVisibility(visible = uiState.isRecordingVoice) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(ElectricOrange.copy(alpha = 0.15f))
-                        .border(1.dp, ElectricOrange.copy(alpha = 0.3f))
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(Color.Red)
-                        )
-                        Text(
-                            text = "Gravando áudio... Fale agora",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ElectricOrange
-                        )
-                    }
-
-                    TextButton(onClick = {
-                        voiceManager.cancel()
-                        viewModel.setRecordingVoice(false)
-                    }) {
-                        Text(text = "Cancelar", color = Color.Red, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-
-            // Per-Message Capacity Chip (Section 6)
-            AnimatedVisibility(visible = uiState.perMessageCapacity != null) {
-                uiState.perMessageCapacity?.let { capLevel ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+            // Barra Inferior de Entrada e Comandos
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 4.dp,
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    // Indicador de mensagem em edição
+                    if (uiState.editingMessageTimestamp != null) {
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "✏️ Editando mensagem anterior...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ElectricOrange,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Cancelar",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.clickable {
+                                    viewModel.onInputTextChanged("")
+                                }
+                            )
+                        }
+                    }
+
+                    // Anexo em preparação
+                    uiState.attachedFile?.let { att ->
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(Icons.Default.Bolt, contentDescription = null, tint = ElectricOrange, modifier = Modifier.size(16.dp))
-                            Text(
-                                text = "Capacidade nesta mensagem: ${capLevel.name}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = ElectricOrange
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { viewModel.setPerMessageCapacity(null) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Remover override", modifier = Modifier.size(14.dp))
-                        }
-                    }
-                }
-            }
-
-            // Attachment Preview Chip (Section 5.4)
-            AnimatedVisibility(visible = uiState.attachedFile != null) {
-                uiState.attachedFile?.let { attachment ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = ElectricOrange, modifier = Modifier.size(16.dp))
+                            Text(text = att.name, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                             Icon(
-                                if (attachment.mimeType.startsWith("image/")) Icons.Default.Image else Icons.Default.Description,
-                                contentDescription = null,
-                                tint = ElectricOrange,
-                                modifier = Modifier.size(18.dp)
+                                Icons.Default.Close,
+                                contentDescription = "Remover",
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { viewModel.removeAttachedFile() }
                             )
-                            Text(
-                                text = attachment.name,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { viewModel.removeAttachedFile() },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Remover anexo", modifier = Modifier.size(14.dp))
                         }
                     }
-                }
-            }
 
-            // New Menu + Popup / Bottom Drawer (Section 5)
-            AnimatedVisibility(visible = uiState.isPlusMenuOpen) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    tonalElevation = 6.dp
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Adicionar à Mensagem",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceAround
+                    // Menu Mais (+)
+                    AnimatedVisibility(visible = uiState.isPlusMenuOpen) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
-                            // 1. Câmera
-                            MenuPlusItem(
-                                icon = Icons.Default.CameraAlt,
-                                label = "Câmera",
-                                onClick = {
-                                    viewModel.togglePlusMenu(false)
-                                    val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                                    if (hasCam) {
-                                        takePictureLauncher.launch(null)
-                                    } else {
-                                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                    }
-                                }
-                            )
-
-                            // 2. Fotos (Only images!)
-                            MenuPlusItem(
-                                icon = Icons.Default.Image,
-                                label = "Fotos",
-                                onClick = {
-                                    viewModel.togglePlusMenu(false)
-                                    photoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                }
-                            )
-
-                            // 3. Arquivos
-                            MenuPlusItem(
-                                icon = Icons.Default.Folder,
-                                label = "Arquivos",
-                                onClick = {
-                                    viewModel.togglePlusMenu(false)
-                                    filePickerLauncher.launch("*/*")
-                                }
-                            )
-
-                            // 4. Capacidade
-                            MenuPlusItem(
-                                icon = Icons.Default.Bolt,
-                                label = "Capacidade",
-                                onClick = {
-                                    viewModel.toggleCapacitySubmenu(!uiState.isCapacitySubmenuOpen)
-                                }
-                            )
-                        }
-
-                        // Submenu de Capacidade (Section 6)
-                        AnimatedVisibility(visible = uiState.isCapacitySubmenuOpen) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
-                                FilterChip(
-                                    selected = uiState.perMessageCapacity == AILevel.LIGHT,
-                                    onClick = { viewModel.setPerMessageCapacity(AILevel.LIGHT) },
-                                    label = { Text("LIGHT") }
-                                )
-                                FilterChip(
-                                    selected = uiState.perMessageCapacity == AILevel.MEDIUM,
-                                    onClick = { viewModel.setPerMessageCapacity(AILevel.MEDIUM) },
-                                    label = { Text("MEDIUM") }
-                                )
-                                FilterChip(
-                                    selected = uiState.perMessageCapacity == AILevel.HIGH,
-                                    onClick = { viewModel.setPerMessageCapacity(AILevel.HIGH) },
-                                    label = { Text("HIGH") }
-                                )
+                                MenuPlusItem(icon = Icons.Default.CameraAlt, label = "Foto") {
+                                    photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                }
+                                MenuPlusItem(icon = Icons.Default.AttachFile, label = "Documento") {
+                                    docPickerLauncher.launch("application/pdf")
+                                }
+                                MenuPlusItem(icon = Icons.Default.Speed, label = "Capacidade") {
+                                    viewModel.toggleCapacitySubmenu(!uiState.isCapacitySubmenuOpen)
+                                }
                             }
                         }
                     }
-                }
-            }
 
-            // Input bar
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 4.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Botão de Adição (+)
-                    IconButton(
-                        onClick = { viewModel.togglePlusMenu(!uiState.isPlusMenuOpen) },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Icon(
-                            if (uiState.isPlusMenuOpen) Icons.Default.Close else Icons.Default.Add,
-                            contentDescription = "Menu de Anexos e Capacidade",
-                            tint = ElectricOrange
-                        )
-                    }
-
-                    // Botão de Áudio (Microfone Repetível)
-                    IconButton(
-                        onClick = {
-                            if (uiState.isRecordingVoice) {
-                                voiceManager.cancel()
-                                viewModel.setRecordingVoice(false)
-                            } else {
-                                val hasAudio = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (hasAudio) {
-                                    voiceManager.startListening(
-                                        onPartial = { partial -> viewModel.onInputTextChanged(partial) },
-                                        onResult = { text ->
-                                            val current = uiState.inputText
-                                            viewModel.onInputTextChanged(if (current.isBlank()) text else "$current $text")
-                                            viewModel.setRecordingVoice(false)
-                                        },
-                                        onError = { viewModel.setRecordingVoice(false) }
-                                    )
-                                    viewModel.setRecordingVoice(true)
-                                } else {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(if (uiState.isRecordingVoice) Color.Red.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Icon(
-                            if (uiState.isRecordingVoice) Icons.Default.MicOff else Icons.Default.Mic,
-                            contentDescription = "Falar por Voz",
-                            tint = if (uiState.isRecordingVoice) Color.Red else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    // Text Input
-                    TextField(
-                        value = uiState.inputText,
-                        onValueChange = { viewModel.onInputTextChanged(it) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(max = 120.dp),
-                        placeholder = { Text("Pergunte algo ao Jarvis...") },
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(20.dp),
-                        maxLines = 4
-                    )
-
-                    // Botão Enviar
-                    IconButton(
-                        onClick = { viewModel.sendMessage() },
-                        enabled = (uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending,
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if ((uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending) ElectricOrange
-                                else MaterialTheme.colorScheme.surfaceVariant
+                    // Submenu de Capacidade
+                    AnimatedVisibility(visible = uiState.isCapacitySubmenuOpen) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = uiState.perMessageCapacity == AILevel.LIGHT,
+                                onClick = { viewModel.setPerMessageCapacity(AILevel.LIGHT) },
+                                label = { Text("⚡ Light") }
                             )
+                            FilterChip(
+                                selected = uiState.perMessageCapacity == AILevel.MEDIUM,
+                                onClick = { viewModel.setPerMessageCapacity(AILevel.MEDIUM) },
+                                label = { Text("⚖️ Medium") }
+                            )
+                            FilterChip(
+                                selected = uiState.perMessageCapacity == AILevel.HIGH,
+                                onClick = { viewModel.setPerMessageCapacity(AILevel.HIGH) },
+                                label = { Text("🧠 High") }
+                            )
+                        }
+                    }
+
+                    // Campo de Texto e Botões de Ação
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Enviar",
-                            tint = if ((uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending) Color.Black
-                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        IconButton(
+                            onClick = { viewModel.togglePlusMenu(!uiState.isPlusMenuOpen) },
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Menu de Ações", tint = ElectricOrange)
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (uiState.isRecordingVoice) {
+                                    voiceManager.cancel()
+                                    viewModel.setRecordingVoice(false)
+                                } else {
+                                    val hasPermission = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+
+                                    if (hasPermission) {
+                                        voiceManager.startListening(
+                                            onPartial = { partial ->
+                                                if (partial.isNotBlank()) viewModel.onInputTextChanged(partial)
+                                            },
+                                            onResult = { text ->
+                                                if (text.isNotBlank()) {
+                                                    viewModel.onInputTextChanged(text)
+                                                    viewModel.sendMessage()
+                                                }
+                                                viewModel.setRecordingVoice(false)
+                                            },
+                                            onError = { err ->
+                                                Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                                viewModel.setRecordingVoice(false)
+                                            }
+                                        )
+                                        viewModel.setRecordingVoice(true)
+                                    } else {
+                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(if (uiState.isRecordingVoice) Color.Red.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Icon(
+                                if (uiState.isRecordingVoice) Icons.Default.MicOff else Icons.Default.Mic,
+                                contentDescription = "Falar por Voz",
+                                tint = if (uiState.isRecordingVoice) Color.Red else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        TextField(
+                            value = uiState.inputText,
+                            onValueChange = { viewModel.onInputTextChanged(it) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(max = 120.dp),
+                            placeholder = { Text("Pergunte algo ao Jarvis...") },
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(20.dp),
+                            maxLines = 4
                         )
+
+                        IconButton(
+                            onClick = { viewModel.sendMessage() },
+                            enabled = (uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if ((uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending) ElectricOrange
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Enviar",
+                                tint = if ((uiState.inputText.isNotBlank() || uiState.attachedFile != null) && !uiState.isSending) Color.Black
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -625,17 +521,24 @@ private fun MenuPlusItem(
 }
 
 @Composable
-fun MessageBubble(message: Message) {
+fun MessageBubble(
+    message: Message,
+    isSpeaking: Boolean = false,
+    onEdit: () -> Unit = {},
+    onSpeak: () -> Unit = {},
+    onStopSpeak: () -> Unit = {}
+) {
     val isUser = message.isFromUser
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val formattedTime = remember(message.timestamp) { timeFormatter.format(Date(message.timestamp)) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
-        // Agent Badges (V2.0.0 Multiagente)
+        // Badges multiagente em respostas do Jarvis
         val agentBadges = remember(message.content) {
             if (!isUser) AgentBadgeHelper.extractBadges(message.content) else emptyList()
         }
@@ -643,12 +546,12 @@ fun MessageBubble(message: Message) {
             AgentBadgesRow(badges = agentBadges)
         }
 
-        // Attachment inside bubble
+        // Anexo dentro da bolha
         message.attachment?.let { att ->
             Surface(
                 modifier = Modifier
                     .padding(bottom = 4.dp)
-                    .widthIn(max = 280.dp),
+                    .widthIn(max = 300.dp),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
@@ -671,45 +574,117 @@ fun MessageBubble(message: Message) {
             }
         }
 
-        Box(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp
+        // Bolha de Texto com SelectionContainer para seleção e cópia de qualquer trecho
+        SelectionContainer {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 340.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isUser) 16.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 16.dp
+                        )
                     )
-                )
-                .background(
-                    if (isUser) ElectricOrange else MaterialTheme.colorScheme.surface
-                )
-                .border(
-                    width = if (isUser) 0.dp else 1.dp,
-                    color = if (isUser) Color.Transparent else MaterialTheme.colorScheme.outlineVariant,
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp
+                    .background(
+                        if (isUser) ElectricOrange else MaterialTheme.colorScheme.surface
                     )
-                )
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (isUser) Color.Black else MaterialTheme.colorScheme.onSurface
-            )
+                    .border(
+                        width = if (isUser) 0.dp else 1.dp,
+                        color = if (isUser) Color.Transparent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isUser) 16.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 16.dp
+                        )
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                if (isUser) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Black
+                    )
+                } else {
+                    MarkdownRenderer(
+                        content = message.content,
+                        textColor = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
         }
 
-        Text(
-            text = formattedTime,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp)
-        )
+        // Barra de Ações da Mensagem: Hora, Copiar, Editar (User) e Voz (Assistant)
+        Row(
+            modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = formattedTime,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Copiar mensagem inteira
+            Icon(
+                imageVector = Icons.Default.ContentCopy,
+                contentDescription = "Copiar Mensagem",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .size(13.dp)
+                    .clickable {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Jarvis", message.content))
+                        Toast.makeText(context, "Mensagem copiada!", Toast.LENGTH_SHORT).show()
+                    }
+            )
+
+            // Compartilhar
+            Icon(
+                imageVector = Icons.Default.Share,
+                contentDescription = "Compartilhar",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .size(13.dp)
+                    .clickable {
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, message.content)
+                            type = "text/plain"
+                        }
+                        val shareIntent = Intent.createChooser(sendIntent, "Compartilhar mensagem")
+                        context.startActivity(shareIntent)
+                    }
+            )
+
+            // Ação de Edição exclusiva para mensagens do usuário
+            if (isUser) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Editar Mensagem",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .size(13.dp)
+                        .clickable { onEdit() }
+                )
+            } else {
+                // Ação de Leitura por Voz (TTS) para respostas do Jarvis
+                Icon(
+                    imageVector = if (isSpeaking) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    contentDescription = if (isSpeaking) "Parar Leitura" else "Ouvir Resposta",
+                    tint = if (isSpeaking) ElectricOrange else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .size(13.dp)
+                        .clickable {
+                            if (isSpeaking) onStopSpeak() else onSpeak()
+                        }
+                )
+            }
+        }
     }
 }
 

@@ -25,6 +25,13 @@ interface ConversationDao {
 
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteConversationById(id: String)
+
+    /**
+     * Limpeza segura: apaga estritamente conversas com ZERO mensagens registradas.
+     * Preserva 100% das conversas que possuem mensagens.
+     */
+    @Query("DELETE FROM conversations WHERE (SELECT COUNT(*) FROM messages WHERE messages.conversationId = conversations.id) = 0")
+    suspend fun deleteEmptyConversations()
 }
 
 @Dao
@@ -37,4 +44,13 @@ interface MessageDao {
 
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun getMessageCount(conversationId: String): Int
+
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteMessageById(id: String)
+
+    /**
+     * Remove mensagens a partir de um timestamp específico para permitir reenvio de edição limpo.
+     */
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND timestamp >= :timestamp")
+    suspend fun deleteMessagesFromTimestamp(conversationId: String, timestamp: Long)
 }

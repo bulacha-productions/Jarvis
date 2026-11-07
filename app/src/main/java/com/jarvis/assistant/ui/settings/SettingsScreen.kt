@@ -1,3 +1,10 @@
+
+import com.jarvis.assistant.domain.model.RoutingMode
+import com.jarvis.assistant.domain.model.MultiAgentMode
+import com.jarvis.assistant.domain.model.FinancialPolicy
+import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.SmartToy
 package com.jarvis.assistant.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
@@ -98,6 +105,14 @@ fun SettingsScreen(
 ) {
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val isMultiAgentEnabled by viewModel.isMultiAgentEnabled.collectAsState()
+    val multiAgentMode by viewModel.multiAgentMode.collectAsState()
+    val routingMode by viewModel.routingMode.collectAsState()
+    val preferredProvider by viewModel.preferredProvider.collectAsState()
+    val financialPolicy by viewModel.financialPolicy.collectAsState()
+    val monthlyBudget by viewModel.monthlyBudget.collectAsState()
+    val currentSpend by viewModel.currentSpend.collectAsState()
+    val isTtsEnabled by viewModel.isTtsEnabled.collectAsState()
+    val isTtsAutoSpeak by viewModel.isTtsAutoSpeak.collectAsState()
     val aiLevel by viewModel.aiLevel.collectAsState()
     val manualProviderOverride by viewModel.manualProviderOverride.collectAsState()
     val enabledProviders by viewModel.enabledProviders.collectAsState()
@@ -186,6 +201,32 @@ fun SettingsScreen(
                                 )
                             )
                         }
+                        // Seleção de Quantidade de Especialistas (V3.0.0)
+                        Text(
+                            text = "Quantidade de Especialistas em Colaboração:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            FilterChip(
+                                selected = multiAgentMode == MultiAgentMode.ONE_AGENT,
+                                onClick = { viewModel.setMultiAgentMode(MultiAgentMode.ONE_AGENT) },
+                                label = { Text("1 Especialista", style = MaterialTheme.typography.labelSmall) }
+                            )
+                            FilterChip(
+                                selected = multiAgentMode == MultiAgentMode.TWO_AGENTS,
+                                onClick = { viewModel.setMultiAgentMode(MultiAgentMode.TWO_AGENTS) },
+                                label = { Text("2 Especialistas", style = MaterialTheme.typography.labelSmall) }
+                            )
+                            FilterChip(
+                                selected = multiAgentMode == MultiAgentMode.AUTOMATIC,
+                                onClick = { viewModel.setMultiAgentMode(MultiAgentMode.AUTOMATIC) },
+                                label = { Text("Automático", style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
 
                         // Agentes da Equipe Jarvis
                         Text(
@@ -198,6 +239,147 @@ fun SettingsScreen(
                         AgentPillRow("🔍 Pesquisador", "Investigação Factual & Síntese Analítica", Color(0xFF81C784))
                         AgentPillRow("✨ Criativo", "Narrativas, Ideação & Redação Expressiva", Color(0xFFBA68C8))
                         AgentPillRow("📊 Analítico", "Raciocínio Matemático, Lógica & Validação", Color(0xFFFFB74D))
+                    }
+                }
+            }
+
+            // SEÇÃO NOVO: JARVIS SMART ROUTER (V3.0.0)
+            item {
+                SectionHeader(title = "JARVIS SMART ROUTER (V3.0.0)", icon = Icons.Default.SmartToy)
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Modo de Roteamento Inteligente:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            RoutingMode.values().forEach { mode ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { viewModel.setRoutingMode(mode) }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = routingMode == mode,
+                                        onClick = { viewModel.setRoutingMode(mode) },
+                                        colors = RadioButtonDefaults.colors(selectedColor = ElectricOrange)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text(text = mode.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                        Text(text = mode.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // SEÇÃO NOVO: POLÍTICA FINANCEIRA & PROTEÇÃO DE CUSTOS
+            item {
+                SectionHeader(title = "POLÍTICA FINANCEIRA & PROTEÇÃO DE CUSTOS", icon = Icons.Default.AttachMoney)
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FinancialPolicy.values().forEach { pol ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { viewModel.setFinancialPolicy(pol) }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = financialPolicy == pol,
+                                    onClick = { viewModel.setFinancialPolicy(pol) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = ElectricOrange)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(text = pol.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Text(text = pol.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Teto Orçamentário Mensal:", style = MaterialTheme.typography.labelMedium)
+                            Text(text = "US$ " + String.format("%.2f", monthlyBudget), fontWeight = FontWeight.Bold, color = ElectricOrange)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Gasto Acumulado Estimado:", style = MaterialTheme.typography.labelMedium)
+                            Text(text = "US$ " + String.format("%.4f", currentSpend), fontWeight = FontWeight.Bold, color = if (currentSpend >= monthlyBudget) Color.Red else Color.Green)
+                        }
+                    }
+                }
+            }
+
+            // SEÇÃO NOVO: VOZ E SÍNTESE FALADA (TTS)
+            item {
+                SectionHeader(title = "VOZ E RESPOSTAS FALADAS (TTS)", icon = Icons.Default.RecordVoiceOver)
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "Sintetizador de Voz (TTS pt-BR)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(text = "Permite ouvir as respostas do Jarvis tocando no ícone de áudio da mensagem.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = isTtsEnabled,
+                                onCheckedChange = { viewModel.setTtsEnabled(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = ElectricOrange)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "Leitura Automática ao Concluir", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(text = "Inicia leitura falada automática quando o Jarvis termina de gerar a resposta.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = isTtsAutoSpeak,
+                                onCheckedChange = { viewModel.setTtsAutoSpeak(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = ElectricOrange)
+                            )
+                        }
                     }
                 }
             }

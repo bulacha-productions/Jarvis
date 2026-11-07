@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
         val chatViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return ChatViewModel(chatRepository, router, preferencesManager) as T
+                return ChatViewModel(applicationContext, chatRepository, router, preferencesManager, secureKeyStore) as T
             }
         })[ChatViewModel::class.java]
 

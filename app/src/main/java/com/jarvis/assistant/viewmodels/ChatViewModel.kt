@@ -1,12 +1,13 @@
 package com.jarvis.assistant.viewmodels
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis.assistant.JarvisVersion
+import com.jarvis.assistant.audio.TTSManager
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
-import com.jarvis.assistant.domain.model.AILevel
-import com.jarvis.assistant.domain.model.Attachment
-import com.jarvis.assistant.domain.model.Message
+import com.jarvis.assistant.domain.model.*
 import com.jarvis.assistant.repositories.ChatRepository
 import com.jarvis.assistant.router.JarvisRouter
 import kotlinx.coroutines.CancellationException
@@ -27,13 +28,18 @@ data class ChatUiState(
     val perMessageCapacity: AILevel? = null,
     val isPlusMenuOpen: Boolean = false,
     val isCapacitySubmenuOpen: Boolean = false,
-    val activeProviderName: String = "Jarvis Neural Core v${JarvisVersion.VERSION_NAME}"
+    val activeProviderName: String = "Jarvis Neural Core v${JarvisVersion.VERSION_NAME}",
+    val lastDecision: SmartRoutingDecision? = null,
+    val editingMessageTimestamp: Long? = null,
+    val isSpeakingTTS: Boolean = false
 )
 
 class ChatViewModel(
+    private val context: Context,
     private val repository: ChatRepository,
     private val router: JarvisRouter,
-    private val preferencesManager: UserPreferencesManager
+    private val preferencesManager: UserPreferencesManager,
+    private val secureKeyStore: SecureKeyStoreManager? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -42,20 +48,37 @@ class ChatViewModel(
     private var messagesJob: Job? = null
     private var streamingJob: Job? = null
 
+    val ttsManager = TTSManager(context)
+
+    init {
+        viewModelScope.launch {
+            repository.cleanupEmptyConversations()
+            ttsManager.isSpeaking.collect { speaking ->
+                _uiState.value = _uiState.value.copy(isSpeakingTTS = speaking)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        ttsManager.shutdown()
+    }
+
     fun loadConversation(conversationId: String?) {
         val current = _uiState.value.currentConversationId
         if (conversationId != null && conversationId == current && messagesJob?.isActive == true) {
             return
         }
 
-        if (conversationId == null) {
-            if (current == null) {
-                startNewChat()
-            }
+        if (conversationId.isNullOrBlank()) {
+            startNewChat()
             return
         }
 
-        _uiState.value = _uiState.value.copy(currentConversationId = conversationId)
+        _uiState.value = _uiState.value.copy(
+            currentConversationId = conversationId,
+            editingMessageTimestamp = null
+        )
         messagesJob?.cancel()
         messagesJob = viewModelScope.launch {
             repository.getMessages(conversationId).collect { msgList ->
@@ -103,13 +126,22 @@ class ChatViewModel(
         )
     }
 
+    /**
+     * Criação Tardia (Lazy Creation):
+     * Abrir nova conversa sem gravar imediatamente no banco.
+     * O registro só é criado quando o usuário envia a primeira mensagem!
+     */
     fun startNewChat() {
         messagesJob?.cancel()
         streamingJob?.cancel()
-        viewModelScope.launch {
-            val id = repository.createNewConversation()
-            loadConversation(id)
-        }
+        ttsManager.stop()
+        _uiState.value = _uiState.value.copy(
+            currentConversationId = null,
+            messages = emptyList(),
+            inputText = "",
+            attachedFile = null,
+            editingMessageTimestamp = null
+        )
     }
 
     fun cancelActiveRequest() {
@@ -125,13 +157,35 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Edição de mensagens: reabre o texto no input e prepara o repositório
+     * para reescrever de forma consistente a partir daquele ponto.
+     */
+    fun editUserMessage(message: Message) {
+        if (!message.isFromUser) return
+        _uiState.value = _uiState.value.copy(
+            inputText = message.content,
+            attachedFile = message.attachment,
+            editingMessageTimestamp = message.timestamp
+        )
+    }
+
+    fun speakMessage(text: String) {
+        ttsManager.speak(text)
+    }
+
+    fun stopSpeaking() {
+        ttsManager.stop()
+    }
+
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         val attachment = _uiState.value.attachedFile
-        val convId = _uiState.value.currentConversationId
+        val targetConvId = _uiState.value.currentConversationId
         val overrideCapacity = _uiState.value.perMessageCapacity
+        val editingTimestamp = _uiState.value.editingMessageTimestamp
 
-        if ((text.isEmpty() && attachment == null) || convId == null || _uiState.value.isSending) return
+        if ((text.isEmpty() && attachment == null) || _uiState.value.isSending) return
 
         val displayContent = if (text.isEmpty() && attachment != null) {
             "[Arquivo Anexado: ${attachment.name}]"
@@ -147,18 +201,37 @@ class ChatViewModel(
                 perMessageCapacity = null,
                 isPlusMenuOpen = false,
                 isCapacitySubmenuOpen = false,
+                editingMessageTimestamp = null,
                 isSending = true
             )
 
-            repository.saveUserMessage(convId, displayContent, attachment)
+            // Se for reenvio de mensagem editada, poda mensagens posteriores
+            if (targetConvId != null && editingTimestamp != null) {
+                repository.pruneMessagesFromTimestamp(targetConvId, editingTimestamp)
+            }
+
+            // Criação tardia: saveUserMessage cria a conversa no Room se targetConvId for nulo!
+            val (convId, _) = repository.saveUserMessage(targetConvId, displayContent, attachment)
+            if (_uiState.value.currentConversationId != convId) {
+                _uiState.value = _uiState.value.copy(currentConversationId = convId)
+                loadConversation(convId)
+            }
 
             val taskAssignments = preferencesManager.taskAssignments.firstOrNull() ?: emptyMap()
             val isMultiAgent = preferencesManager.isMultiAgentEnabled.firstOrNull() ?: true
+            val multiAgentMode = preferencesManager.multiAgentMode.firstOrNull() ?: MultiAgentMode.AUTOMATIC
+            val routingMode = preferencesManager.routingMode.firstOrNull() ?: RoutingMode.AUTOMATIC
+            val preferredProvider = preferencesManager.preferredProvider.firstOrNull()
             val enabledProviders = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
             val manualOverride = preferencesManager.manualProviderOverride.firstOrNull()
             val selectedModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
-            val history = _uiState.value.messages
+            val financialPolicy = preferencesManager.financialPolicy.firstOrNull() ?: FinancialPolicy.FREE_ONLY
+            val monthlyBudget = preferencesManager.monthlyBudget.firstOrNull() ?: 5.0
+            val currentSpend = preferencesManager.currentSpend.firstOrNull() ?: 0.0
+            val openAiKey = secureKeyStore?.getApiKey("openai")
+            val isAutoSpeak = preferencesManager.isTtsAutoSpeak.firstOrNull() ?: false
 
+            val history = _uiState.value.messages
             val responseBuilder = StringBuilder()
 
             try {
@@ -169,9 +242,16 @@ class ChatViewModel(
                     overrideLevel = overrideCapacity,
                     taskAssignments = taskAssignments,
                     enabledProviderIds = enabledProviders,
+                    multiAgentMode = multiAgentMode,
                     isMultiAgentEnabled = isMultiAgent,
+                    routingMode = routingMode,
+                    preferredProviderId = preferredProvider,
                     manualProviderId = manualOverride,
-                    selectedModels = selectedModels
+                    selectedModels = selectedModels,
+                    financialPolicy = financialPolicy,
+                    currentSpend = currentSpend,
+                    monthlyBudget = monthlyBudget,
+                    openAiApiKey = openAiKey
                 ).collect { chunk ->
                     responseBuilder.append(chunk)
                 }
@@ -180,8 +260,13 @@ class ChatViewModel(
                     "Nenhuma resposta foi gerada pelo modelo selecionado."
                 }
                 repository.saveAssistantMessage(convId, finalResponse)
-            } catch (e: CancellationException) {
-                // Cancelamento voluntário
+
+                // Leitura TTS automática se ativada nas configurações
+                if (isAutoSpeak) {
+                    ttsManager.speak(finalResponse)
+                }
+            } catch (_: CancellationException) {
+                // Cancelamento voluntário do usuário
             } catch (e: Exception) {
                 repository.saveAssistantMessage(
                     convId,

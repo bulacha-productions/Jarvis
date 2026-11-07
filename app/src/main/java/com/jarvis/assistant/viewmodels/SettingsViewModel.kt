@@ -8,17 +8,14 @@ import com.jarvis.assistant.ai.AIProviderConfig
 import com.jarvis.assistant.ai.ClaudeProvider
 import com.jarvis.assistant.ai.ConnectionTestResult
 import com.jarvis.assistant.ai.GeminiProvider
+import com.jarvis.assistant.ai.MockSystemProvider
 import com.jarvis.assistant.ai.OpenAIProvider
 import com.jarvis.assistant.ai.OpenRouterProvider
-import com.jarvis.assistant.ai.MockSystemProvider
 import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
-import com.jarvis.assistant.domain.model.AILevel
-import com.jarvis.assistant.domain.model.AIModelInfo
-import com.jarvis.assistant.domain.model.ModelCapability
-import com.jarvis.assistant.domain.model.TaskAssignment
+import com.jarvis.assistant.domain.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +53,54 @@ class SettingsViewModel(
         initialValue = true
     )
 
+    val multiAgentMode = preferencesManager.multiAgentMode.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = MultiAgentMode.AUTOMATIC
+    )
+
+    val routingMode = preferencesManager.routingMode.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = RoutingMode.AUTOMATIC
+    )
+
+    val preferredProvider = preferencesManager.preferredProvider.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = null
+    )
+
+    val financialPolicy = preferencesManager.financialPolicy.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = FinancialPolicy.FREE_ONLY
+    )
+
+    val monthlyBudget = preferencesManager.monthlyBudget.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 5.0
+    )
+
+    val currentSpend = preferencesManager.currentSpend.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 0.0
+    )
+
+    val isTtsEnabled = preferencesManager.isTtsEnabled.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = true
+    )
+
+    val isTtsAutoSpeak = preferencesManager.isTtsAutoSpeak.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = false
+    )
+
     val aiLevel = preferencesManager.aiLevel.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -80,8 +125,15 @@ class SettingsViewModel(
         initialValue = setOf("gemini", "openai", "claude", "openrouter")
     )
 
-    private val _settingsState = MutableStateFlow(SettingsUiState())
-    val settingsState: StateFlow<SettingsUiState> = _settingsState.asStateFlow()
+    val selectedModels = preferencesManager.selectedModels.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
+
+    private val _uiState = MutableStateFlow(SettingsUiState())
+    val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+    val settingsState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
         loadProviders()
@@ -89,125 +141,141 @@ class SettingsViewModel(
 
     fun loadProviders() {
         viewModelScope.launch {
-            val geminiKey = secureKeyStore.getApiKey("gemini")
-            val openaiKey = secureKeyStore.getApiKey("openai")
-            val claudeKey = secureKeyStore.getApiKey("claude")
-            val openrouterKey = secureKeyStore.getApiKey("openrouter")
-
             val enabledSet = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
-            val selectedModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
+            val chosenModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
 
-            val geminiProvider = GeminiProvider(context) { secureKeyStore.getApiKey("gemini") }
-            val openaiProvider = OpenAIProvider(context, { secureKeyStore.getApiKey("openai") }, { "" })
-            val claudeProvider = ClaudeProvider(context) { secureKeyStore.getApiKey("claude") }
-            val openrouterProvider = OpenRouterProvider(context) { secureKeyStore.getApiKey("openrouter") }
-
-            val geminiModels = (geminiProvider.getAvailableModels(AILevel.MEDIUM) +
-                    geminiProvider.getAvailableModels(AILevel.LIGHT) +
-                    geminiProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
-
-            val openaiModels = (openaiProvider.getAvailableModels(AILevel.MEDIUM) +
-                    openaiProvider.getAvailableModels(AILevel.LIGHT) +
-                    openaiProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
-
-            val claudeModels = (claudeProvider.getAvailableModels(AILevel.MEDIUM) +
-                    claudeProvider.getAvailableModels(AILevel.LIGHT) +
-                    claudeProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
-
-            val openrouterModels = (openrouterProvider.getAvailableModels(AILevel.MEDIUM) +
-                    openrouterProvider.getAvailableModels(AILevel.LIGHT) +
-                    openrouterProvider.getAvailableModels(AILevel.HIGH)).distinctBy { it.id }
-
-            val list = listOf(
+            val providerConfigs = listOf(
                 AIProviderConfig(
                     id = "gemini",
                     type = ProviderType.GEMINI,
                     displayName = "Google Gemini",
-                    apiKey = geminiKey,
-                    isEnabled = enabledSet.contains("gemini"),
-                    availableModels = geminiModels,
-                    selectedModel = selectedModels["gemini"] ?: "gemini-2.5-flash",
-                    status = if (geminiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    apiKey = secureKeyStore.getApiKey("gemini"),
+                    isEnabled = "gemini" in enabledSet,
+                    selectedModel = chosenModels["gemini"] ?: "gemini-2.5-flash",
+                    status = if (secureKeyStore.getApiKey("gemini").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
                     id = "openai",
                     type = ProviderType.OPENAI,
                     displayName = "OpenAI",
-                    apiKey = openaiKey,
-                    isEnabled = enabledSet.contains("openai"),
-                    availableModels = openaiModels,
-                    selectedModel = selectedModels["openai"] ?: "gpt-4o",
-                    status = if (openaiKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    apiKey = secureKeyStore.getApiKey("openai"),
+                    isEnabled = "openai" in enabledSet,
+                    selectedModel = chosenModels["openai"] ?: "gpt-4o",
+                    status = if (secureKeyStore.getApiKey("openai").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
                     id = "claude",
                     type = ProviderType.CLAUDE,
                     displayName = "Anthropic Claude",
-                    apiKey = claudeKey,
-                    isEnabled = enabledSet.contains("claude"),
-                    availableModels = claudeModels,
-                    selectedModel = selectedModels["claude"] ?: "claude-3-5-sonnet-20241022",
-                    status = if (claudeKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    apiKey = secureKeyStore.getApiKey("claude"),
+                    isEnabled = "claude" in enabledSet,
+                    selectedModel = chosenModels["claude"] ?: "claude-3-5-sonnet-20241022",
+                    status = if (secureKeyStore.getApiKey("claude").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 ),
                 AIProviderConfig(
                     id = "openrouter",
                     type = ProviderType.OPENROUTER,
                     displayName = "OpenRouter",
-                    apiKey = openrouterKey,
-                    isEnabled = enabledSet.contains("openrouter"),
-                    availableModels = openrouterModels,
-                    selectedModel = selectedModels["openrouter"] ?: "meta-llama/llama-3.3-70b-instruct:free",
-                    status = if (openrouterKey.isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    apiKey = secureKeyStore.getApiKey("openrouter"),
+                    isEnabled = "openrouter" in enabledSet,
+                    selectedModel = chosenModels["openrouter"] ?: OpenRouterProvider.DEFAULT_FREE_MODEL,
+                    status = if (secureKeyStore.getApiKey("openrouter").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
                 )
             )
-
-            _settingsState.value = _settingsState.value.copy(
-                providers = list,
-                keystoreHealthy = secureKeyStore.isKeystoreFunctional()
-            )
+            _uiState.value = _uiState.value.copy(providers = providerConfigs)
         }
     }
 
-    fun updateApiKey(providerId: String, apiKey: String) {
-        secureKeyStore.saveApiKey(providerId, apiKey.trim())
-        val updated = _settingsState.value.providers.map {
-            if (it.id == providerId) {
-                it.copy(
-                    apiKey = apiKey.trim(),
-                    status = if (apiKey.isNotBlank()) ProviderStatus.TESTING else ProviderStatus.UNCONFIGURED
-                )
-            } else it
-        }
-        _settingsState.value = _settingsState.value.copy(providers = updated)
+
+    fun updateApiKey(providerId: String, apiKey: String) = saveApiKey(providerId, apiKey)
+    fun toggleProviderEnabled(providerId: String, isEnabled: Boolean) = toggleProvider(providerId, isEnabled)
+    fun removeApiKey(providerId: String) = saveApiKey(providerId, "")
+    fun toggleModelEnabled(providerId: String, modelId: String, isEnabled: Boolean) {}
+
+    fun saveApiKey(providerId: String, apiKey: String) {
+        secureKeyStore.saveApiKey(providerId, apiKey)
+        loadProviders()
     }
 
-    fun removeApiKey(providerId: String) {
-        secureKeyStore.removeApiKey(providerId)
-        val updated = _settingsState.value.providers.map {
-            if (it.id == providerId) {
-                it.copy(apiKey = "", status = ProviderStatus.UNCONFIGURED, lastError = null)
-            } else it
-        }
-        _settingsState.value = _settingsState.value.copy(providers = updated, testResultMessage = null)
-    }
-
-    fun toggleProviderEnabled(providerId: String, isEnabled: Boolean) {
+    fun toggleProvider(providerId: String, isEnabled: Boolean) {
         viewModelScope.launch {
             preferencesManager.setProviderEnabled(providerId, isEnabled)
-            val updated = _settingsState.value.providers.map {
-                if (it.id == providerId) it.copy(isEnabled = isEnabled) else it
-            }
-            _settingsState.value = _settingsState.value.copy(providers = updated)
+            loadProviders()
         }
     }
 
     fun selectModel(providerId: String, modelId: String) {
         viewModelScope.launch {
             preferencesManager.setSelectedModel(providerId, modelId)
-            val updated = _settingsState.value.providers.map {
-                if (it.id == providerId) it.copy(selectedModel = modelId) else it
-            }
-            _settingsState.value = _settingsState.value.copy(providers = updated)
+            loadProviders()
+        }
+    }
+
+    fun setRoutingMode(mode: RoutingMode) {
+        viewModelScope.launch {
+            preferencesManager.setRoutingMode(mode)
+        }
+    }
+
+    fun setPreferredProvider(providerId: String?) {
+        viewModelScope.launch {
+            preferencesManager.setPreferredProvider(providerId)
+        }
+    }
+
+    fun setMultiAgentMode(mode: MultiAgentMode) {
+        viewModelScope.launch {
+            preferencesManager.setMultiAgentMode(mode)
+        }
+    }
+
+    fun setFinancialPolicy(policy: FinancialPolicy) {
+        viewModelScope.launch {
+            preferencesManager.setFinancialPolicy(policy)
+        }
+    }
+
+    fun setMonthlyBudget(budget: Double) {
+        viewModelScope.launch {
+            preferencesManager.setMonthlyBudget(budget)
+        }
+    }
+
+    fun setTtsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setTtsEnabled(enabled)
+        }
+    }
+
+    fun setTtsAutoSpeak(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setTtsAutoSpeak(enabled)
+        }
+    }
+
+    fun setDarkTheme(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setDarkTheme(enabled)
+        }
+    }
+
+    fun toggleMultiAgent(enabled: Boolean) = setMultiAgentEnabled(enabled)
+
+    fun setMultiAgentEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setMultiAgentEnabled(enabled)
+        }
+    }
+
+    fun setAILevel(level: AILevel) {
+        viewModelScope.launch {
+            preferencesManager.setAILevel(level)
+        }
+    }
+
+    fun setManualProviderOverride(providerId: String?) {
+        viewModelScope.launch {
+            preferencesManager.setManualProvider(providerId)
         }
     }
 
@@ -215,33 +283,20 @@ class SettingsViewModel(
         testConnection(providerId)
     }
 
-    fun setManualProvider(providerId: String?) {
-        viewModelScope.launch {
-            preferencesManager.setManualProvider(providerId)
-        }
-    }
-
-    fun toggleDiagnostics(isOpen: Boolean) {
-        _settingsState.value = _settingsState.value.copy(
-            isDiagnosticsOpen = isOpen,
-            keystoreHealthy = secureKeyStore.isKeystoreFunctional()
-        )
-    }
-
     fun testConnection(providerId: String) {
-        viewModelScope.launch {
-            _settingsState.value = _settingsState.value.copy(
-                isTestingConnection = true,
-                testResultMessage = null,
-                lastTestSuccess = null
-            )
+        val providerConfig = _uiState.value.providers.find { it.id == providerId } ?: return
+        _uiState.value = _uiState.value.copy(
+            isTestingConnection = true,
+            testResultMessage = null,
+            lastTestSuccess = null
+        )
 
-            val providerConfig = _settingsState.value.providers.find { it.id == providerId }
-            if (providerConfig == null || providerConfig.apiKey.isBlank()) {
-                _settingsState.value = _settingsState.value.copy(
+        viewModelScope.launch {
+            if (providerConfig.apiKey.isBlank()) {
+                _uiState.value = _uiState.value.copy(
                     isTestingConnection = false,
-                    lastTestSuccess = false,
-                    testResultMessage = "Por favor, informe a chave de API antes de testar a conexão."
+                    testResultMessage = "Insira uma chave de API para testar.",
+                    lastTestSuccess = false
                 )
                 return@launch
             }
@@ -263,114 +318,35 @@ class SettingsViewModel(
                     providerConfig.availableModels
                 }
 
-                val currentSelected = providerConfig.selectedModel
-                val newSelected = if (updatedModels.any { it.id == currentSelected }) {
-                    currentSelected
-                } else {
-                    updatedModels.firstOrNull()?.id ?: currentSelected
-                }
-
-                if (newSelected != currentSelected) {
-                    preferencesManager.setSelectedModel(providerId, newSelected)
-                }
-
-                val updatedProviders = _settingsState.value.providers.map {
-                    if (it.id == providerId) {
-                        it.copy(
-                            status = ProviderStatus.CONNECTED,
-                            availableModels = updatedModels,
-                            selectedModel = newSelected,
-                            lastError = null
-                        )
-                    } else it
-                }
-                _settingsState.value = _settingsState.value.copy(
-                    providers = updatedProviders,
+                _uiState.value = _uiState.value.copy(
                     isTestingConnection = false,
+                    testResultMessage = "✓ " + testResult.message,
                     lastTestSuccess = true,
-                    testResultMessage = testResult.message
+                    providers = _uiState.value.providers.map { p ->
+                        if (p.id == providerId) {
+                            p.copy(
+                                status = ProviderStatus.CONNECTED,
+                                availableModels = updatedModels,
+                                lastError = null
+                            )
+                        } else p
+                    }
                 )
             } else {
-                val updatedProviders = _settingsState.value.providers.map {
-                    if (it.id == providerId) {
-                        it.copy(
-                            status = ProviderStatus.ERROR,
-                            lastError = testResult.message
-                        )
-                    } else it
-                }
-                _settingsState.value = _settingsState.value.copy(
-                    providers = updatedProviders,
+                _uiState.value = _uiState.value.copy(
                     isTestingConnection = false,
+                    testResultMessage = "✗ " + testResult.message,
                     lastTestSuccess = false,
-                    testResultMessage = testResult.message
+                    providers = _uiState.value.providers.map { p ->
+                        if (p.id == providerId) {
+                            p.copy(
+                                status = ProviderStatus.ERROR,
+                                lastError = testResult.message
+                            )
+                        } else p
+                    }
                 )
             }
-        }
-    }
-
-    fun addCustomModel(
-        providerId: String,
-        modelId: String,
-        displayName: String,
-        defaultLevel: AILevel,
-        capabilities: Set<ModelCapability>
-    ) {
-        val newModel = AIModelInfo(
-            id = modelId.trim(),
-            displayName = displayName.ifBlank { modelId }.trim(),
-            providerId = providerId,
-            defaultLevel = defaultLevel,
-            capabilities = capabilities,
-            description = "Modelo cadastrado manualmente pelo usuário."
-        )
-        val updated = _settingsState.value.providers.map { p ->
-            if (p.id == providerId) {
-                val existing = p.availableModels.filter { it.id != modelId }
-                p.copy(availableModels = existing + newModel)
-            } else p
-        }
-        _settingsState.value = _settingsState.value.copy(providers = updated)
-    }
-
-    fun toggleModelEnabled(providerId: String, modelId: String, isEnabled: Boolean) {
-        val updated = _settingsState.value.providers.map { p ->
-            if (p.id == providerId) {
-                val models = p.availableModels.map { m ->
-                    if (m.id == modelId) m.copy(isEnabled = isEnabled) else m
-                }
-                p.copy(availableModels = models)
-            } else p
-        }
-        _settingsState.value = _settingsState.value.copy(providers = updated)
-    }
-
-    fun saveTaskAssignments(assignments: Map<String, TaskAssignment>) {
-        viewModelScope.launch {
-            preferencesManager.saveTaskAssignments(assignments)
-            _settingsState.value = _settingsState.value.copy(taskAssignments = assignments)
-        }
-    }
-
-    fun setWizardOpen(isOpen: Boolean) {
-        _settingsState.value = _settingsState.value.copy(isWizardOpen = isOpen)
-    }
-
-    fun toggleTheme(enabled: Boolean) {
-        viewModelScope.launch {
-            preferencesManager.setDarkTheme(enabled)
-        }
-    }
-
-    fun toggleMultiAgent(enabled: Boolean) {
-        viewModelScope.launch {
-            preferencesManager.setMultiAgentEnabled(enabled)
-        }
-    }
-
-    fun updateAILevel(level: AILevel) {
-        viewModelScope.launch {
-            preferencesManager.setAILevel(level)
         }
     }
 }
