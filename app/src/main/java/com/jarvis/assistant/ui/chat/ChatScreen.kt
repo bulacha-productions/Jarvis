@@ -150,7 +150,7 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        JarvisMascot(isThinking = uiState.isSending, size = 36.dp)
+                        JarvisMascot(size = 36.dp)
                         Column {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
