@@ -45,6 +45,9 @@ import com.jarvis.assistant.domain.model.Message
 import com.jarvis.assistant.ui.components.JarvisMascot
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.viewmodels.ChatViewModel
+import com.jarvis.assistant.audio.JarvisVoiceState
+import com.jarvis.assistant.service.JarvisVoiceService
+
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -59,6 +62,8 @@ fun ChatScreen(
     conversationId: String? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val voiceServiceState by JarvisVoiceService.voiceState.collectAsState()
+
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
@@ -168,10 +173,25 @@ fun ChatScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Text(
-                                text = if (uiState.isSending) "Coordenando tarefas..." else "Smart Router Ativo",
+                                                        Text(
+                                text = when (voiceServiceState) {
+                                    is JarvisVoiceState.LISTENING_FOR_WAKE_WORD -> "🎙️ Aguardando \"Jarvis\"..."
+                                    is JarvisVoiceState.WAKE_WORD_DETECTED -> "✨ Palavra-chave detectada!"
+                                    is JarvisVoiceState.LISTENING_FOR_COMMAND -> "🎙️ Ouvindo sua pergunta..."
+                                    is JarvisVoiceState.PROCESSING -> "🧠 Processando resposta..."
+                                    is JarvisVoiceState.SPEAKING -> "🔊 Respondendo em voz alta..."
+                                    is JarvisVoiceState.PAUSED -> "⏸️ Escuta por voz pausada"
+                                    else -> if (uiState.isSending) "Coordenando tarefas..." else "Smart Router Ativo"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = when (voiceServiceState) {
+                                    is JarvisVoiceState.LISTENING_FOR_WAKE_WORD -> Color(0xFF22C55E)
+                                    is JarvisVoiceState.WAKE_WORD_DETECTED,
+                                    is JarvisVoiceState.LISTENING_FOR_COMMAND -> ElectricOrange
+                                    is JarvisVoiceState.PROCESSING -> Color(0xFF3B82F6)
+                                    is JarvisVoiceState.SPEAKING -> Color(0xFF06B6D4)
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
                         }
                     }

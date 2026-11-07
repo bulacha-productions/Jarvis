@@ -1,6 +1,10 @@
 package com.jarvis.assistant
 
 import android.os.Bundle
+import android.content.Intent
+import com.jarvis.assistant.receiver.BootReceiver
+import com.jarvis.assistant.service.JarvisVoiceService
+
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,6 +33,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleVoiceServiceAutoStart(intent)
+
 
         val database = JarvisDatabase.getInstance(applicationContext)
         val preferencesManager = UserPreferencesManager(applicationContext)
@@ -74,6 +80,18 @@ class MainActivity : ComponentActivity() {
                     settingsViewModel = settingsViewModel
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleVoiceServiceAutoStart(intent)
+    }
+
+    private fun handleVoiceServiceAutoStart(intent: Intent?) {
+        if (intent?.getBooleanExtra(BootReceiver.EXTRA_START_VOICE_SERVICE, false) == true) {
+            JarvisVoiceService.startService(applicationContext)
         }
     }
 }

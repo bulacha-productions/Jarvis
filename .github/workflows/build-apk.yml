@@ -37,29 +37,27 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v3.0.0-apk
+        name: jarvis-v3.1.0-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v3.0.0-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v3.0.0 (Build ${{ github.run_number }})
+        tag_name: v3.1.0-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v3.1.0 (Build ${{ github.run_number }})
         body: |
-          ### 🚀 Jarvis Assistant v3.0.0 — Smart Intelligence Update (Build Code 7)
+          ### 🎙️ Jarvis Assistant v3.1.0 — Wake Word & Continuous Voice Activation (Build Code 8)
           
-          **Principais Novidades e Evoluções da Versão 3.0.0:**
-          - 🧠 **Jarvis Smart Router Independente:** Módulo desacoplado com análise inteligente de complexidade, tarefas (código, lógica, pesquisa, criatividade, anexos) e seleção automática de modelos e provedores. Suporta modos Automático, Manual e Automático com Preferência.
-          - 👥 **Multiagente Avançado com Modo de 2 Especialistas:** Três modos configuráveis: 1 Especialista (menor latência/custo), 2 Especialistas (cooperação em cadeia com responsabilidades distintas + síntese central do Jarvis) e Automático. Modelos independentes por agente.
-          - 💰 **Política Financeira & Proteção de Custos:** Modos "Somente Gratuitos" (bloqueio 100% estrito a cobranças), "Priorizar Gratuitos" e "Gratuitos e Pagos". Controle orçamentário mensal com cálculo prévio e rastreamento de consumo acumulado.
-          - 🌐 **Catálogo Completo OpenRouter:** Descoberta em tempo real de modelos de múltiplas organizações (Meta, DeepSeek, Qwen, Mistral, Google, NVIDIA, etc.) com detecção de preços por milhão de tokens, modalidades e sufixos `:free`.
-          - 🛠️ **Correção Multiturno Definitiva no Google Gemini:** Fim do erro `HTTP 400 — Multiturn chat is not enabled`. Normalização estrita de turnos, união de parts consecutivas e fallback inteligente para turno único estruturado.
-          - 🎨 **Arquitetura de Ferramentas e Geração de Imagens:** Interceptação de instruções internas (como `{"action": "dalle.text2im", ...}`). Execução via DALL-E quando disponível ou orientação com prompt especializado sem vazamento de JSON para o usuário.
-          - 📝 **Markdown Nativo, Blocos de Código & Link Previews:** Renderização completa de títulos, listas, citações, blocos de código com botão "Copiar", rolagem horizontal e pré-visualizações ricas de links (OpenGraph estilo WhatsApp) com proteção SSRF.
-          - 💬 **Seleção de Texto e Edição de Mensagens:** `SelectionContainer` em todas as bolhas, cópia de trechos ou mensagens completas e edição de mensagens anteriores com reenvio consistente.
-          - 🗄️ **Criação Tardia de Conversas (Lazy Creation):** Não acumula conversas vazias "Nova Conversa" no banco Room; conversas só são salvas ao enviar a primeira mensagem, com limpeza segura de registros vazios anteriores.
-          - 🔊 **Voz e TTS Consolidado (pt-BR):** Reconhecimento de voz resiliente com permissões e nova síntese Text-to-Speech (TTS) com leitura de respostas e opção de auto-speak.
+          **Principais Recursos e Inovações da Versão 3.1.0:**
+          - 🗣️ **Detecção Local de Palavra-Chave ("Jarvis"):** Reconhecimento offline local com tolerância fonética no português brasileiro (`pt-BR`). Sem envio constante de áudio a servidores em nuvem, garantindo privacidade, baixo consumo de bateria e latência instantânea.
+          - 🔄 **Foreground Service Especializado (`type="microphone"`):** Serviço em primeiro plano compatível com Android 14, 15 e 16 com notificação persistente, permitindo ativação mesmo com outros apps abertos ou tela bloqueada.
+          - ⚙️ **Máquina de Estados de Voz Rigorosa:** Estados `INACTIVE`, `STARTING`, `LISTENING_FOR_WAKE_WORD`, `WAKE_WORD_DETECTED`, `LISTENING_FOR_COMMAND`, `PROCESSING`, `SPEAKING`, `PAUSED` e `ERROR`, evitando sobreposição de reconhecedores ou autoativação enquanto o assistente fala.
+          - 🔕 **Proteção de Autoativação (Anti Self-Trigger):** O microfone é pausado durante a síntese de voz (TTS), impedindo que a voz do próprio Jarvis dispare comandos acidentalmente.
+          - 📱 **Compatibilidade com Reinicialização (Boot Recovery):** Detecção segura de `BOOT_COMPLETED` em conformidade com as restrições do Android 12+, emitindo notificação interativa com 1 toque para inicialização autorizada do microfone sem violar diretrizes de segundo plano.
+          - 🛠️ **Painel de Diagnóstico Completo (10 Testes):** Verificação individual de permissões (RECORD_AUDIO, POST_NOTIFICATIONS), hardware de microfone, compatibilidade pt-BR, serviço em primeiro plano, regex fonética, TTS nativo e persistência Room.
+          - 🎛️ **Seção de Configurações do Sistema de Voz:** Status em tempo real, ativação automática, confirmação verbal ("Estou ouvindo"), leitura em voz alta (TTS), botões Iniciar, Pausar, Encerrar e testes rápidos de fala e TTS.
+          - 🧠 **Preservação Arquitetural Completa:** Smart Router v3.0, Sistema Multiagente (1 ou 2 especialistas), Catálogo OpenRouter, Políticas Financeiras (Free/Paid), Keystore AES-256 e Histórico Room intactos.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

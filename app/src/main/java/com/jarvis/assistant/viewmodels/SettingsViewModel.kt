@@ -16,6 +16,11 @@ import com.jarvis.assistant.ai.ProviderType
 import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.domain.model.*
+import com.jarvis.assistant.audio.JarvisVoiceState
+import com.jarvis.assistant.audio.TTSManager
+import com.jarvis.assistant.audio.VoiceDiagnosticsManager
+import com.jarvis.assistant.service.JarvisVoiceService
+
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +38,8 @@ data class SettingsUiState(
     val isWizardOpen: Boolean = false,
     val taskAssignments: Map<String, TaskAssignment> = emptyMap(),
     val isDiagnosticsOpen: Boolean = false,
-    val keystoreHealthy: Boolean = true
+    val keystoreHealthy: Boolean = true,
+    val isVoiceDiagnosticsOpen: Boolean = false
 )
 
 class SettingsViewModel(
@@ -98,7 +104,30 @@ class SettingsViewModel(
 
     val isTtsAutoSpeak = preferencesManager.isTtsAutoSpeak.stateIn(
         scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000)
+
+    // V3.1.0: Sistema de Voz e Wake Word
+    val voiceState = JarvisVoiceService.voiceState
+    val isVoiceServiceRunning = JarvisVoiceService.isServiceRunning
+
+    val isWakeWordEnabled = preferencesManager.isWakeWordEnabled.stateIn(
+        scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
+        initialValue = false
+    )
+
+    val isWakeWordSpokenFeedback = preferencesManager.isWakeWordSpokenFeedback.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = true
+    )
+
+    val diagnosticsManager = VoiceDiagnosticsManager(context)
+    val diagnosticsItems = diagnosticsManager.items
+
+    private val _isVoiceDiagnosticsOpen = MutableStateFlow(false)
+    val isVoiceDiagnosticsOpen = _isVoiceDiagnosticsOpen.asStateFlow()
+,
         initialValue = false
     )
 
@@ -371,4 +400,60 @@ class SettingsViewModel(
             }
         }
     }
+
+    // V3.1.0: Métodos de Controle do Sistema de Voz
+    fun setWakeWordEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setWakeWordEnabled(enabled)
+            if (enabled) {
+                JarvisVoiceService.startService(context)
+            } else {
+                JarvisVoiceService.stopService(context)
+            }
+        }
+    }
+
+    fun setWakeWordSpokenFeedback(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.setWakeWordSpokenFeedback(enabled)
+        }
+    }
+
+    fun startVoiceListening() {
+        viewModelScope.launch {
+            preferencesManager.setWakeWordEnabled(true)
+            JarvisVoiceService.startService(context)
+        }
+    }
+
+    fun pauseVoiceListening() {
+        JarvisVoiceService.pauseService(context)
+    }
+
+    fun resumeVoiceListening() {
+        JarvisVoiceService.resumeService(context)
+    }
+
+    fun stopVoiceListening() {
+        viewModelScope.launch {
+            preferencesManager.setWakeWordEnabled(false)
+            JarvisVoiceService.stopService(context)
+        }
+    }
+
+    fun runVoiceDiagnostics() {
+        viewModelScope.launch {
+            diagnosticsManager.runAllDiagnostics()
+        }
+    }
+
+    fun setVoiceDiagnosticsOpen(isOpen: Boolean) {
+        _isVoiceDiagnosticsOpen.value = isOpen
+    }
+
+    fun testTtsQuick() {
+        val tts = TTSManager(context)
+        tts.speak("Teste do sistema de síntese de voz do Jarvis 3.1.0 concluído com sucesso.")
+    }
+
 }

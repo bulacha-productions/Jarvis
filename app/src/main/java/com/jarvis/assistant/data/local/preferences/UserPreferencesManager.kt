@@ -29,6 +29,9 @@ class UserPreferencesManager(private val context: Context) {
     private val KEY_CURRENT_SPEND = doublePreferencesKey("pref_current_spend_v3_0_0")
     private val KEY_TTS_ENABLED = booleanPreferencesKey("pref_tts_enabled_v3_0_0")
     private val KEY_TTS_AUTO_SPEAK = booleanPreferencesKey("pref_tts_auto_speak_v3_0_0")
+    private val KEY_WAKE_WORD_ENABLED = booleanPreferencesKey("pref_wake_word_enabled_v3_1_0")
+    private val KEY_WAKE_WORD_SPOKEN_FEEDBACK = booleanPreferencesKey("pref_wake_word_spoken_feedback_v3_1_0")
+
 
     val isDarkTheme: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_DARK_THEME] ?: true
@@ -72,6 +75,15 @@ class UserPreferencesManager(private val context: Context) {
     val isTtsAutoSpeak: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[KEY_TTS_AUTO_SPEAK] ?: false
     }
+
+    val isWakeWordEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_WAKE_WORD_ENABLED] ?: false
+    }
+
+    val isWakeWordSpokenFeedback: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[KEY_WAKE_WORD_SPOKEN_FEEDBACK] ?: true
+    }
+
 
     val manualProviderOverride: Flow<String?> = context.dataStore.data.map { preferences ->
         preferences[KEY_MANUAL_PROVIDER]
@@ -153,6 +165,19 @@ class UserPreferencesManager(private val context: Context) {
             preferences[KEY_TTS_AUTO_SPEAK] = enabled
         }
     }
+
+    suspend fun setWakeWordEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_WAKE_WORD_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setWakeWordSpokenFeedback(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_WAKE_WORD_SPOKEN_FEEDBACK] = enabled
+        }
+    }
+
 
     val aiLevel: Flow<AILevel> = context.dataStore.data.map { preferences ->
         val levelString = preferences[KEY_AI_LEVEL] ?: AILevel.MEDIUM.name

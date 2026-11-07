@@ -98,6 +98,18 @@ import androidx.compose.material3.RadioButton
 import com.jarvis.assistant.ui.theme.ElectricOrange
 import com.jarvis.assistant.ui.wizard.ModelConfigWizardDialog
 import com.jarvis.assistant.viewmodels.SettingsViewModel
+import com.jarvis.assistant.audio.JarvisVoiceState
+import com.jarvis.assistant.ui.settings.VoiceDiagnosticsDialog
+import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.CheckCircle
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,6 +131,13 @@ fun SettingsScreen(
     val manualProviderOverride by viewModel.manualProviderOverride.collectAsState()
     val enabledProviders by viewModel.enabledProviders.collectAsState()
     val settingsState by viewModel.settingsState.collectAsState()
+    val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
+    val isWakeWordSpokenFeedback by viewModel.isWakeWordSpokenFeedback.collectAsState()
+    val voiceState by viewModel.voiceState.collectAsState()
+    val isVoiceServiceRunning by viewModel.isVoiceServiceRunning.collectAsState()
+    val isVoiceDiagnosticsOpen by viewModel.isVoiceDiagnosticsOpen.collectAsState()
+    val diagnosticsItems by viewModel.diagnosticsItems.collectAsState()
+
 
     var showKeyForProviderId by remember { mutableStateOf<String?>(null) }
     var providerToAddModel by remember { mutableStateOf<AIProviderConfig?>(null) }
@@ -341,9 +360,9 @@ fun SettingsScreen(
                 }
             }
 
-            // SEÇÃO NOVO: VOZ E SÍNTESE FALADA (TTS)
+            // SEÇÃO 5: SISTEMA DE VOZ & ATIVAÇÃO POR PALAVRA-CHAVE ("JARVIS")
             item {
-                SectionHeader(title = "VOZ E RESPOSTAS FALADAS (TTS)", icon = Icons.Default.RecordVoiceOver)
+                SectionHeader(title = "SISTEMA DE VOZ & WAKE WORD ("JARVIS")", icon = Icons.Default.RecordVoiceOver)
             }
             item {
                 Card(
@@ -351,15 +370,113 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        // Status Card em Tempo Real
+                        val (statusBadgeBg, statusBadgeFg, statusIcon) = when (voiceState) {
+                            is JarvisVoiceState.LISTENING_FOR_WAKE_WORD -> Triple(Color(0xFF22C55E).copy(alpha = 0.15f), Color(0xFF22C55E), Icons.Default.Hearing)
+                            is JarvisVoiceState.WAKE_WORD_DETECTED -> Triple(ElectricOrange.copy(alpha = 0.2f), ElectricOrange, Icons.Default.CheckCircle)
+                            is JarvisVoiceState.LISTENING_FOR_COMMAND -> Triple(ElectricOrange.copy(alpha = 0.2f), ElectricOrange, Icons.Default.Mic)
+                            is JarvisVoiceState.PROCESSING -> Triple(Color(0xFF3B82F6).copy(alpha = 0.2f), Color(0xFF3B82F6), Icons.Default.Sync)
+                            is JarvisVoiceState.SPEAKING -> Triple(Color(0xFF06B6D4).copy(alpha = 0.2f), Color(0xFF06B6D4), Icons.Default.VolumeUp)
+                            is JarvisVoiceState.PAUSED -> Triple(Color(0xFFF59E0B).copy(alpha = 0.2f), Color(0xFFF59E0B), Icons.Default.Pause)
+                            is JarvisVoiceState.ERROR -> Triple(Color(0xFFEF4444).copy(alpha = 0.2f), Color(0xFFEF4444), Icons.Default.Error)
+                            else -> Triple(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), MaterialTheme.colorScheme.onSurfaceVariant, Icons.Default.MicOff)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(statusBadgeBg, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(imageVector = statusIcon, contentDescription = null, tint = statusBadgeFg, modifier = Modifier.size(20.dp))
+                                    Column {
+                                        Text(text = "Estado da Escuta", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(text = voiceState.label, fontWeight = FontWeight.Bold, color = statusBadgeFg, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+
+                                Surface(
+                                    color = if (isVoiceServiceRunning) Color(0xFF22C55E).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = if (isVoiceServiceRunning) "SERVIÇO ATIVO" else "SERVIÇO PARADO",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isVoiceServiceRunning) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        // Toggle Ativação Automática
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Sintetizador de Voz (TTS pt-BR)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                Text(text = "Permite ouvir as respostas do Jarvis tocando no ícone de áudio da mensagem.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(text = "Ativação Contínua por Palavra-Chave", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "Permite chamar o assistente dizendo "Jarvis" mesmo com o app em segundo plano ou tela bloqueada.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isWakeWordEnabled,
+                                onCheckedChange = { viewModel.setWakeWordEnabled(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = ElectricOrange)
+                            )
+                        }
+
+                        // Informações do Reconhecedor
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(text = "Palavra-Chave:", style = MaterialTheme.typography.labelMedium)
+                                Surface(color = ElectricOrange.copy(alpha = 0.2f), shape = RoundedCornerShape(6.dp)) {
+                                    Text(
+                                        text = ""Jarvis"",
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = ElectricOrange,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(text = "Idioma:", style = MaterialTheme.typography.labelMedium)
+                                Text(text = "Português (Brasil)", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                        // Respostas Faladas por Voz (TTS)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "Respostas Faladas em Voz Alta (TTS)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(text = "Lê a resposta do assistente em português brasileiro após processar.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
                                 checked = isTtsEnabled,
@@ -367,25 +484,102 @@ fun SettingsScreen(
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = ElectricOrange)
                             )
                         }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Leitura Automática ao Concluir", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                                Text(text = "Inicia leitura falada automática quando o Jarvis termina de gerar a resposta.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(text = "Confirmação Verbal ("Estou ouvindo")", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                Text(text = "Jarvis responde verbalmente ao ouvir a palavra-chave.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(
-                                checked = isTtsAutoSpeak,
-                                onCheckedChange = { viewModel.setTtsAutoSpeak(it) },
+                                checked = isWakeWordSpokenFeedback,
+                                onCheckedChange = { viewModel.setWakeWordSpokenFeedback(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = ElectricOrange)
                             )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+                        // Botões de Ação do Serviço
+                        Text(text = "Controles Rápidos do Serviço:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (!isVoiceServiceRunning || voiceState is JarvisVoiceState.INACTIVE || voiceState is JarvisVoiceState.PAUSED) {
+                                Button(
+                                    onClick = { viewModel.startVoiceListening() },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ElectricOrange),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(text = if (voiceState is JarvisVoiceState.PAUSED) "Retomar" else "Iniciar", color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { viewModel.pauseVoiceListening() },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(text = "Pausar")
+                                }
+                            }
+
+                            if (isVoiceServiceRunning) {
+                                Button(
+                                    onClick = { viewModel.stopVoiceListening() },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.85f)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(text = "Encerrar", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        // Testes e Diagnóstico
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.testTtsQuick() },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Testar TTS", style = MaterialTheme.typography.labelSmall)
+                            }
+
+                            Button(
+                                onClick = {
+                                    viewModel.setVoiceDiagnosticsOpen(true)
+                                    viewModel.runVoiceDiagnostics()
+                                },
+                                modifier = Modifier.weight(1.3f),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp), tint = ElectricOrange)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Diagnóstico (10 Testes)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
-
+            
             // SEÇÃO 2: PROVEDORES DE IA & APIS
             item {
                 SectionHeader(title = "PROVEDORES DE IA & APIS", icon = Icons.Default.Key)
@@ -756,6 +950,14 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+        if (isVoiceDiagnosticsOpen) {
+        VoiceDiagnosticsDialog(
+            items = diagnosticsItems,
+            onRunAll = { viewModel.runVoiceDiagnostics() },
+            onDismiss = { viewModel.setVoiceDiagnosticsOpen(false) }
+        )
     }
 
     if (settingsState.isWizardOpen) {
