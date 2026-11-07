@@ -174,7 +174,7 @@ private fun DiagnosticItemCard(item: DiagnosticItem) {
         DiagnosticStatus.PASSED -> Color(0xFF22C55E) to Icons.Default.CheckCircle
         DiagnosticStatus.FAILED -> Color(0xFFEF4444) to Icons.Default.Error
         DiagnosticStatus.RUNNING -> ElectricOrange to Icons.Default.Refresh
-        DiagnosticStatus.NOT_TESTED -> MaterialTheme.colorScheme.outline to Icons.Default.HelpOutline
+        DiagnosticStatus.NOT_TESTED -> MaterialTheme.colorScheme.outline to Icons.Default.Info
     }
 
     Card(

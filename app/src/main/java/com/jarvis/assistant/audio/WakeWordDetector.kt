@@ -27,7 +27,7 @@ class WakeWordDetector(
     companion object {
         private const val TAG = "WakeWordDetector"
         /** Regex fonética tolerante para o português brasileiro */
-        val WAKE_WORD_REGEX = Regex("(?i)\b(jarvis|jarviz|iarvis|iárvis|charvis|jarvees)\b")
+        val WAKE_WORD_REGEX = Regex("""(?i)\b(jarvis|jarviz|iarvis|iárvis|charvis|jarvees)\b""")
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
