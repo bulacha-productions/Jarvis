@@ -238,7 +238,7 @@ fun ChatScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        JarvisMascot(isThinking = false, size = 72.dp)
+                        JarvisMascot(size = 72.dp)
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = "Jarvis Neural Core v${JarvisVersion.VERSION_NAME}",

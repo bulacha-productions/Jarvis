@@ -282,6 +282,7 @@ class SettingsViewModel(
 
 
     fun updateAILevel(level: AILevel) = setAILevel(level)
+    fun setManualProvider(providerId: String?) = setManualProviderOverride(providerId)
     fun toggleTheme(enabled: Boolean) = setDarkTheme(enabled)
 
     fun saveTaskAssignments(assignments: Map<String, TaskAssignment>) {
@@ -294,7 +295,7 @@ class SettingsViewModel(
         _uiState.update { it.copy(isWizardOpen = isOpen) }
     }
 
-    fun addCustomModel(providerId: String, modelId: String, modelName: String, level: AILevel, capabilities: Set<String>) {
+    fun addCustomModel(providerId: String, modelId: String, modelName: String, level: AILevel, capabilities: Set<ModelCapability>) {
         viewModelScope.launch {
             selectModel(providerId, modelId)
         }
