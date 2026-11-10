@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
@@ -64,7 +65,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
             DiagnosticItem(3, "Disponibilidade do SpeechRecognizer", "Verifica a presença do serviço nativo de reconhecimento de voz no Android."),
             DiagnosticItem(4, "Reconhecimento On-Device (Offline)", "Verifica se o sistema oferece suporte a reconhecimento local sem envio à nuvem."),
             DiagnosticItem(5, "Serviço Foreground e Notificações", "Verifica o canal de notificação, permissão POST_NOTIFICATIONS e status do serviço."),
-            DiagnosticItem(6, "Detecção da Palavra-Chave "Jarvis"", "Testa o algoritmo fonético e tolerâncias acústicas da wake word."),
+            DiagnosticItem(6, "Detecção da Palavra-Chave 'Jarvis'", "Testa o algoritmo fonético e tolerâncias acústicas da wake word."),
             DiagnosticItem(7, "Suporte a Idioma Português (pt-BR)", "Verifica a disponibilidade do idioma pt-BR no motor de reconhecimento."),
             DiagnosticItem(8, "Motor TTS Nativo e Voz pt-BR", "Valida a inicialização da síntese de voz (TTS) e dados do idioma em português."),
             DiagnosticItem(9, "Persistência do Banco de Dados Room", "Executa teste de integridade das tabelas de mensagens e sessões."),
@@ -189,7 +190,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
         updateItem(5, DiagnosticStatus.RUNNING)
         val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
         val channel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notifManager?.getNotificationChannel(JarvisVoiceService.NOTIFICATION_CHANNEL_ID)
+            notifManager?.getNotificationChannel(JarvisVoiceService.CHANNEL_ID)
         } else null
 
         val areNotifsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -217,7 +218,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
         val falseTest = !regex.containsMatchIn("computador desligar janela")
 
         if (test1 && test2 && test3 && test4 && falseTest) {
-            updateItem(6, DiagnosticStatus.PASSED, "Regex fonético "Jarvis" validado (cobertura: jarvis, jarviz, iarvis).", null)
+            updateItem(6, DiagnosticStatus.PASSED, "Regex fonético 'Jarvis' validado (cobertura: jarvis, jarviz, iarvis).", null)
         } else {
             updateItem(6, DiagnosticStatus.FAILED, "Falha na validação do padrão fonético da palavra-chave.", "Verifique o WAKE_WORD_REGEX em WakeWordDetector.")
         }
@@ -262,7 +263,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
         updateItem(9, DiagnosticStatus.RUNNING)
         try {
             val db = JarvisDatabase.getInstance(context)
-            val convs = db.conversationDao().getAllConversations()
+            val convs = db.conversationDao().getAllConversations().firstOrNull() ?: emptyList()
             updateItem(9, DiagnosticStatus.PASSED, "Banco Room íntegro (${convs.size} conversas registradas).", null)
         } catch (e: Exception) {
             updateItem(9, DiagnosticStatus.FAILED, "Erro ao acessar banco Room: ${e.message}", "Verifique o armazenamento interno do app.")
