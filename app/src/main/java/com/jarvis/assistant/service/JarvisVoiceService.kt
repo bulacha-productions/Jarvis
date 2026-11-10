@@ -440,12 +440,8 @@ class JarvisVoiceService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Jarvis — Escuta por voz ativa")
-            .setContentText("\${state.label}: \${state.description}")
-            .setStyle(NotificationCompat.BigTextStyle().bigText(
-                "Palavra-chave: Jarvis
-Status: \${state.label}
-\${state.description}"
-            ))
+            .setContentText("${state.label}: ${state.description}")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("Palavra-chave: \"Jarvis\" | Status: " + state.label + "\n" + state.description))
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)

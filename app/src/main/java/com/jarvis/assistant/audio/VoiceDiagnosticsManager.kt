@@ -167,7 +167,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
         if (available) {
             updateItem(3, DiagnosticStatus.PASSED, "Serviço nativo SpeechRecognizer disponível no Android.", null)
         } else {
-            updateItem(3, DiagnosticStatus.FAILED, "Nenhum motor SpeechRecognizer encontrado.", "Instale ou ative o aplicativo "Serviços de Voz do Google" (Speech Services by Google) na Play Store.")
+            updateItem(3, DiagnosticStatus.FAILED, "Nenhum motor SpeechRecognizer encontrado.", "Instale ou ative o aplicativo \"Serviços de Voz do Google\" (Speech Services by Google) na Play Store.")
         }
     }
 

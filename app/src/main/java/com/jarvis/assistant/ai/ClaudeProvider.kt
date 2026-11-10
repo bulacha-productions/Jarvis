@@ -220,9 +220,7 @@ class ClaudeProvider(
                 // V3.1.1: Combina mensagens consecutivas do mesmo papel em vez de descartar
                 val lastMsg = messagesArray.getJSONObject(messagesArray.length() - 1)
                 val existing = lastMsg.optString("content", "")
-                lastMsg.put("content", "$existing
-
-${msg.content.trim()}")
+                lastMsg.put("content", "$existing\n\n${msg.content.trim()}")
             } else {
                 val msgObj = JSONObject()
                 msgObj.put("role", role)
