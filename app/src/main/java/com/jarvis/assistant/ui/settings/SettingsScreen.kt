@@ -1098,19 +1098,26 @@ private fun ProviderCard(
                             .clip(CircleShape)
                             .background(
                                 when (provider.status) {
-                                    ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
+                                    ProviderStatus.CONEXAO_VALIDADA, ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
+                                    ProviderStatus.CREDENCIAL_SALVA -> Color(0xFF29B6F6)
                                     ProviderStatus.TESTING -> Color(0xFFFFA000)
-                                    ProviderStatus.ERROR -> Color(0xFFEF5350)
-                                    ProviderStatus.UNCONFIGURED -> Color.Gray
+                                    ProviderStatus.SEM_CREDENCIAL, ProviderStatus.UNCONFIGURED -> Color.Gray
+                                    else -> Color(0xFFEF5350)
                                 }
                             )
                     )
                     Column {
                         Text(text = provider.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = if (provider.apiKey.isNotBlank()) "Credencial salva no Keystore" else "Sem credencial",
+                            text = provider.status.label,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (provider.apiKey.isNotBlank()) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = when (provider.status) {
+                                ProviderStatus.CONEXAO_VALIDADA, ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
+                                ProviderStatus.CREDENCIAL_SALVA -> Color(0xFF29B6F6)
+                                ProviderStatus.TESTING -> Color(0xFFFFA000)
+                                ProviderStatus.SEM_CREDENCIAL, ProviderStatus.UNCONFIGURED -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> Color(0xFFEF5350)
+                            }
                         )
                     }
                 }

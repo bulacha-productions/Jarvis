@@ -2,6 +2,7 @@ package com.jarvis.assistant.audio
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,7 +12,6 @@ import android.speech.SpeechRecognizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.Locale
 
 sealed class VoiceState {
     object Idle : VoiceState()
@@ -21,15 +21,33 @@ sealed class VoiceState {
     data class Error(val message: String) : VoiceState()
 }
 
+/**
+ * Gerenciador de reconhecimento de fala para comandos e perguntas do usuário.
+ * 
+ * V3.1.1: Prioriza reconhecimento local (On-Device) no Android 12+ (API 31+) quando
+ * suportado pelo sistema operacional. Informa com transparência quando depende da rede.
+ */
 class VoiceRecognitionManager(private val context: Context) {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
 
+    private val _isOnDevice = MutableStateFlow(false)
+    val isOnDevice: StateFlow<Boolean> = _isOnDevice.asStateFlow()
+
     fun isRecognitionAvailable(): Boolean {
         return SpeechRecognizer.isRecognitionAvailable(context)
+    }
+
+    fun checkOnDeviceRecognitionAvailable(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        } else {
+            false
+        }
     }
 
     fun startListening(
@@ -48,7 +66,14 @@ class VoiceRecognitionManager(private val context: Context) {
             stopAndDestroyInternal()
 
             try {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                val hasOnDevice = checkOnDeviceRecognitionAvailable()
+                _isOnDevice.value = hasOnDevice
+
+                speechRecognizer = if (hasOnDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }.apply {
                     setRecognitionListener(object : RecognitionListener {
                         override fun onReadyForSpeech(params: Bundle?) {
                             _voiceState.value = VoiceState.Listening
@@ -68,14 +93,17 @@ class VoiceRecognitionManager(private val context: Context) {
 
                         override fun onError(error: Int) {
                             val message = when (error) {
-                                SpeechRecognizer.ERROR_NO_MATCH -> "Nenhuma fala detectada. Toque no microfone e tente novamente."
+                                SpeechRecognizer.ERROR_NO_MATCH -> "Nenhuma fala detectada. Fale novamente mais perto do microfone."
                                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Tempo esgotado sem detecção de fala."
-                                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Falha de conexão com o serviço de voz."
+                                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
+                                    if (hasOnDevice) "Falha transitória na interface de voz."
+                                    else "Falha de conexão com o serviço de voz do sistema (requer internet)."
+                                }
                                 SpeechRecognizer.ERROR_AUDIO -> "Falha na gravação de áudio do microfone."
-                                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Permissão de microfone não concedida."
+                                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Permissão RECORD_AUDIO não concedida."
                                 SpeechRecognizer.ERROR_CLIENT -> "Sessão reiniciada. Toque para tentar novamente."
                                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "O mecanismo de voz já está ativo. Aguarde."
-                                else -> "Erro no reconhecimento de voz ($error). Tente novamente."
+                                else -> "Erro no reconhecimento de voz (\$error). Tente novamente."
                             }
                             _voiceState.value = VoiceState.Error(message)
                             onError(message)
@@ -112,12 +140,15 @@ class VoiceRecognitionManager(private val context: Context) {
                         putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("pt-BR", "en-US"))
                         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                        if (hasOnDevice) {
+                            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                        }
                     }
 
                     startListening(intent)
                 }
             } catch (e: Exception) {
-                val err = "Não foi possível iniciar o microfone: ${e.message}"
+                val err = "Não foi possível iniciar o microfone: \${e.message}"
                 _voiceState.value = VoiceState.Error(err)
                 onError(err)
                 stopAndDestroyInternal()

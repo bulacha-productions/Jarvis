@@ -74,7 +74,8 @@ class OpenRouterProvider(
             return ConnectionTestResult(
                 isSuccess = false,
                 statusCode = 400,
-                message = "Chave de API OpenRouter não informada."
+                message = "Chave de API OpenRouter não informada.",
+                status = ProviderStatus.SEM_CREDENCIAL
             )
         }
 
@@ -90,29 +91,81 @@ class OpenRouterProvider(
             client.newCall(request).execute().use { response ->
                 val bodyStr = response.body?.string() ?: ""
                 if (response.isSuccessful) {
+                    // Autenticação da chave aprovada. Agora consulta o catálogo de modelos remotamente
                     val modelsResult = queryRemoteModels(trimmedKey, baseUrl)
-                    val models = modelsResult.getOrNull() ?: emptyList()
-                    val freeCount = models.count { it.isFree }
-                    ConnectionTestResult(
-                        isSuccess = true,
-                        statusCode = response.code,
-                        message = "Conexão OpenRouter bem-sucedida! ${models.size} modelos catalogados ($freeCount gratuitos).",
-                        discoveredModels = models
-                    )
+                    if (modelsResult.isSuccess) {
+                        val models = modelsResult.getOrNull() ?: emptyList()
+                        val freeCount = models.count { it.isFree }
+                        val unknownPriceCount = models.count { !it.isFree && it.promptPricePerMillion == null }
+                        if (models.isNotEmpty()) {
+                            ConnectionTestResult(
+                                isSuccess = true,
+                                statusCode = response.code,
+                                message = "Autenticação: Válida | Catálogo: ${models.size} modelos | Gratuitos: $freeCount | Preço Desconhecido: $unknownPriceCount",
+                                status = ProviderStatus.CONEXAO_VALIDADA,
+                                isAuthValid = true,
+                                isCatalogLoaded = true,
+                                discoveredModels = models,
+                                freeModelsCount = freeCount,
+                                unknownPriceCount = unknownPriceCount
+                            )
+                        } else {
+                            ConnectionTestResult(
+                                isSuccess = true,
+                                statusCode = response.code,
+                                message = "Autenticação aprovada, mas a OpenRouter retornou catálogo vazio.",
+                                status = ProviderStatus.NENHUM_MODELO_COMPATIVEL,
+                                isAuthValid = true,
+                                isCatalogLoaded = false,
+                                discoveredModels = emptyList()
+                            )
+                        }
+                    } else {
+                        val catalogErr = modelsResult.exceptionOrNull()?.message ?: "Falha ao obter lista de modelos"
+                        ConnectionTestResult(
+                            isSuccess = false,
+                            statusCode = response.code,
+                            message = "Autenticação validada [HTTP 200], mas catálogo de modelos indisponível: $catalogErr",
+                            status = ProviderStatus.CATALOGO_INDISPONIVEL,
+                            isAuthValid = true,
+                            isCatalogLoaded = false,
+                            failureReason = catalogErr
+                        )
+                    }
                 } else {
                     val errorMsg = extractErrorMessage(bodyStr, response.code)
+                    val status = when (response.code) {
+                        401 -> ProviderStatus.ERRO_DE_AUTENTICACAO
+                        403 -> ProviderStatus.ERRO_DE_PERMISSAO
+                        else -> ProviderStatus.ERRO_DE_REDE
+                    }
                     ConnectionTestResult(
                         isSuccess = false,
                         statusCode = response.code,
-                        message = "Falha OpenRouter [HTTP ${response.code}]: $errorMsg"
+                        message = "Falha OpenRouter [HTTP ${response.code}]: $errorMsg",
+                        status = status,
+                        isAuthValid = false,
+                        isCatalogLoaded = false,
+                        failureReason = errorMsg
                     )
                 }
             }
         } catch (e: Exception) {
+            val netError = when (e) {
+                is java.net.UnknownHostException -> "Falha de DNS: Não foi possível resolver 'openrouter.ai'. Verifique sua conexão."
+                is java.net.SocketTimeoutException -> "Tempo limite de conexão esgotado (Timeout) ao contatar OpenRouter."
+                is java.net.ConnectException -> "Conexão recusada ao servidor da OpenRouter."
+                is javax.net.ssl.SSLException -> "Falha de negociação TLS/SSL com a OpenRouter."
+                else -> "Erro de rede com OpenRouter: ${e.message ?: "Conexão falhou"}"
+            }
             ConnectionTestResult(
                 isSuccess = false,
                 statusCode = 0,
-                message = "Erro de rede com OpenRouter: ${e.message ?: "Conexão falhou"}"
+                message = netError,
+                status = ProviderStatus.ERRO_DE_REDE,
+                isAuthValid = false,
+                isCatalogLoaded = false,
+                failureReason = netError
             )
         }
     }
@@ -148,12 +201,21 @@ class OpenRouterProvider(
                     val description = obj.optString("description", "")
                     val contextLength = obj.optInt("context_length", 8192)
 
-                    // Precificação em USD por token convertida para USD por milhão de tokens
+                    // V3.1.1: Preço desconhecido NUNCA é classificado como gratuito
                     val pricing = obj.optJSONObject("pricing")
-                    val promptPricePerToken = pricing?.optDouble("prompt", 0.0) ?: 0.0
-                    val completionPricePerToken = pricing?.optDouble("completion", 0.0) ?: 0.0
-                    val promptPricePerMillion = promptPricePerToken * 1_000_000.0
-                    val completionPricePerMillion = completionPricePerToken * 1_000_000.0
+                    val hasPricing = pricing != null && pricing.has("prompt") && pricing.has("completion")
+                    val promptPricePerToken: Double? = if (hasPricing) {
+                        val p = pricing!!.optDouble("prompt", -1.0)
+                        if (p >= 0) p else null
+                    } else null
+
+                    val completionPricePerToken: Double? = if (hasPricing) {
+                        val c = pricing!!.optDouble("completion", -1.0)
+                        if (c >= 0) c else null
+                    } else null
+
+                    val promptPricePerMillion = promptPricePerToken?.let { it * 1_000_000.0 }
+                    val completionPricePerMillion = completionPricePerToken?.let { it * 1_000_000.0 }
 
                     val isFree = modelId.endsWith(":free") || (promptPricePerToken == 0.0 && completionPricePerToken == 0.0)
 

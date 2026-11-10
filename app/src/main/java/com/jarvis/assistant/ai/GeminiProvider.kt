@@ -41,14 +41,15 @@ class GeminiProvider(
     companion object {
         const val BASE_URL_V1BETA = "https://generativelanguage.googleapis.com/v1beta"
         const val BASE_URL_V1 = "https://generativelanguage.googleapis.com/v1"
-        const val DEFAULT_FALLBACK_MODEL = "gemini-2.5-flash"
+        // V3.1.1: Sem fallback forçado a modelos obsoletos
 
         fun extractErrorMessage(errorBody: String?, httpCode: Int): String {
             if (errorBody.isNullOrBlank()) {
                 return when (httpCode) {
                     400 -> "Parâmetros de requisição inválidos (HTTP 400)."
-                    401, 403 -> "Chave de API do Google Gemini inválida ou sem permissão (HTTP $httpCode)."
-                    404 -> "Modelo do Gemini não encontrado (HTTP 404)."
+                    401 -> "Chave de API do Google Gemini inválida (HTTP 401). Verifique sua chave no Google AI Studio."
+                    403 -> "Acesso negado no Google Gemini (HTTP 403). Verifique as permissões de API na sua conta."
+                    404 -> "Modelo do Gemini não encontrado na API (HTTP 404). O modelo solicitado não existe nesta versão da API ou conta."
                     429 -> "Limite de cota excedido no Google Gemini (HTTP 429). Aguarde alguns segundos."
                     500, 503 -> "Servidor do Google Gemini temporariamente indisponível (HTTP $httpCode)."
                     else -> "Erro na API do Google Gemini (HTTP $httpCode)."
@@ -58,10 +59,10 @@ class GeminiProvider(
                 val json = JSONObject(errorBody)
                 val errorObj = json.optJSONObject("error")
                 val message = errorObj?.optString("message", "") ?: ""
-                val cleanMessage = message.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "AI_KEY_REDACTED")
-                if (cleanMessage.isNotBlank()) cleanMessage else "Erro HTTP $httpCode: $errorBody"
+                val cleanMessage = message.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]")
+                if (cleanMessage.isNotBlank()) cleanMessage else "Erro HTTP $httpCode: ${errorBody.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]")}"
             } catch (_: Exception) {
-                errorBody.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "AI_KEY_REDACTED").take(200)
+                errorBody.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]").take(250)
             }
         }
     }
@@ -218,38 +219,8 @@ class GeminiProvider(
                 return if (filtered.isNotEmpty()) filtered else remote
             }
         }
-        return listOf(
-            AIModelInfo(
-                id = "gemini-2.5-flash",
-                displayName = "Gemini 2.5 Flash",
-                providerId = id,
-                defaultLevel = AILevel.MEDIUM,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
-                description = "Google Gemini 2.5 Flash de alta velocidade",
-                isFree = true,
-                organization = "Google"
-            ),
-            AIModelInfo(
-                id = "gemini-2.0-flash",
-                displayName = "Gemini 2.0 Flash",
-                providerId = id,
-                defaultLevel = AILevel.LIGHT,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
-                description = "Google Gemini 2.0 Flash",
-                isFree = true,
-                organization = "Google"
-            ),
-            AIModelInfo(
-                id = "gemini-2.5-pro",
-                displayName = "Gemini 2.5 Pro",
-                providerId = id,
-                defaultLevel = AILevel.HIGH,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING),
-                description = "Google Gemini 2.5 Pro de alta complexidade e raciocínio",
-                isFree = true,
-                organization = "Google"
-            )
-        )
+        // V3.1.1: Não substitui catálogo vazio por modelos fictícios
+        return emptyList()
     }
 
     override fun generateStreamResponse(
@@ -265,7 +236,16 @@ class GeminiProvider(
             return@flow
         }
 
-        val resolvedModel = modelName.trim().removePrefix("models/").ifBlank { DEFAULT_FALLBACK_MODEL }
+        val cleanModel = modelName.trim().removePrefix("models/")
+        val resolvedModel = if (cleanModel.isNotBlank()) {
+            cleanModel
+        } else {
+            val available = queryRemoteModels(key).getOrNull()
+            available?.firstOrNull()?.id ?: run {
+                emit("Erro: Nenhum modelo do Google Gemini selecionado ou disponível no catálogo da sua conta.")
+                return@flow
+            }
+        }
 
         // 1. Montagem estrita de histórico com alternância correta (user -> model -> user -> model -> user)
         // Combina partes consecutivas para evitar erros de papéis duplicados

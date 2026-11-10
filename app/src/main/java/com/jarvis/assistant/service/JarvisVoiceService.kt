@@ -1,5 +1,6 @@
 package com.jarvis.assistant.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,10 +8,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,6 +17,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.jarvis.assistant.MainActivity
 import com.jarvis.assistant.ai.ClaudeProvider
 import com.jarvis.assistant.ai.GeminiProvider
@@ -44,9 +44,12 @@ import kotlinx.coroutines.flow.firstOrNull
 /**
  * Foreground Service do Jarvis para escuta contínua e ativação por palavra-chave ("Jarvis").
  * 
- * Utiliza o tipo oficial 'microphone' no Android 14+ (API 34/35/36).
- * Gerencia a máquina de estados, notificação persistente com ações rápidas,
- * captura de perguntas, envio ao Smart Router e resposta falada (TTS).
+ * V3.1.1:
+ * - Verificação estrita de permissão RECORD_AUDIO antes da alocação de hardware.
+ * - Só declara serviço ativo após confirmação bem-sucedida de startForeground().
+ * - Tratamento defensivo de SecurityException e restrições de microfone no Android 14/15/16.
+ * - Callbacks event-driven do TextToSpeech para retorno sem delays arbitrários.
+ * - Proteção anti-autodisparo garantindo que microfone e detector permaneçam mutados durante a fala.
  */
 class JarvisVoiceService : Service() {
 
@@ -70,10 +73,14 @@ class JarvisVoiceService : Service() {
             val intent = Intent(context, JarvisVoiceService::class.java).apply {
                 action = ACTION_START
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Não foi possível iniciar JarvisVoiceService", e)
             }
         }
 
@@ -110,34 +117,61 @@ class JarvisVoiceService : Service() {
     private lateinit var voiceRecognitionManager: VoiceRecognitionManager
     private var wakeWordDetector: WakeWordDetector? = null
 
-    private var audioManager: AudioManager? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
-
     override fun onCreate() {
         super.onCreate()
-        _isServiceRunning.value = true
-        _voiceState.value = JarvisVoiceState.STARTING
-        createNotificationChannel()
 
+        // 1. Verificação prévia de permissão RECORD_AUDIO
+        val hasMicPermission = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasMicPermission) {
+            Log.e(TAG, "Permissão RECORD_AUDIO não concedida para o ForegroundService.")
+            _voiceState.value = JarvisVoiceState.ERROR("Permissão de microfone não concedida.")
+            _isServiceRunning.value = false
+            stopSelf()
+            return
+        }
+
+        // 2. Inicialização do canal de notificação
+        createNotificationChannel()
         val initialNotification = buildNotification(JarvisVoiceState.STARTING)
-        try {
+
+        // 3. Inicia Foreground Service com tipo microphone
+        val startSuccess = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
                     this,
                     NOTIFICATION_ID,
                     initialNotification,
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    } else {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    }
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, initialNotification)
             }
+            true
+        } catch (sec: SecurityException) {
+            Log.e(TAG, "SecurityException ao iniciar ForegroundService com tipo microphone", sec)
+            _voiceState.value = JarvisVoiceState.ERROR("Acesso de segurança negado ao microfone: ${sec.message}")
+            _isServiceRunning.value = false
+            stopSelf()
+            false
         } catch (e: Exception) {
             Log.e(TAG, "Falha ao iniciar ForegroundService", e)
+            _voiceState.value = JarvisVoiceState.ERROR("Falha ao iniciar serviço em primeiro plano: ${e.message}")
+            _isServiceRunning.value = false
+            stopSelf()
+            false
         }
+
+        if (!startSuccess) {
+            return
+        }
+
+        // 4. Apenas após sucesso comprovado de startForeground declaramos serviço ativo
+        _isServiceRunning.value = true
+        _voiceState.value = JarvisVoiceState.STARTING
 
         initializeComponents()
     }
@@ -157,7 +191,6 @@ class JarvisVoiceService : Service() {
 
         ttsManager = TTSManager(appCtx)
         voiceRecognitionManager = VoiceRecognitionManager(appCtx)
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
         wakeWordDetector = WakeWordDetector(
             context = appCtx,
@@ -193,6 +226,7 @@ class JarvisVoiceService : Service() {
     }
 
     private fun transitionToWakeWordListening() {
+        if (!_isServiceRunning.value || _voiceState.value is JarvisVoiceState.PAUSED) return
         updateState(JarvisVoiceState.LISTENING_FOR_WAKE_WORD)
         wakeWordDetector?.startListening()
     }
@@ -204,19 +238,20 @@ class JarvisVoiceService : Service() {
         serviceScope.launch {
             val spokenFeedback = preferencesManager.isWakeWordSpokenFeedback.firstOrNull() ?: true
             if (spokenFeedback) {
-                // Pequena resposta verbal de confirmação
-                ttsManager.speak("Estou ouvindo.")
-                delay(900)
+                // Confirmação verbal orientada a eventos (sem delay arbitrário)
+                ttsManager.speak("Estou ouvindo.") {
+                    mainHandler.post {
+                        startCommandCapture()
+                    }
+                }
+            } else {
+                startCommandCapture()
             }
-
-            // Inicia captura da pergunta
-            startCommandCapture()
         }
     }
 
     private fun startCommandCapture() {
         updateState(JarvisVoiceState.LISTENING_FOR_COMMAND)
-
         mainHandler.post {
             voiceRecognitionManager.startListening(
                 onPartial = { /* feedback em tela se aberta */ },
@@ -224,12 +259,11 @@ class JarvisVoiceService : Service() {
                     if (recognizedText.isNotBlank()) {
                         processUserCommand(recognizedText)
                     } else {
-                        // Nenhuma fala válida: retorna suavemente para a escuta de palavra-chave
                         mainHandler.postDelayed({
                             if (_voiceState.value is JarvisVoiceState.LISTENING_FOR_COMMAND) {
                                 transitionToWakeWordListening()
                             }
-                        }, 500)
+                        }, 300)
                     }
                 },
                 onError = {
@@ -237,7 +271,7 @@ class JarvisVoiceService : Service() {
                         if (_voiceState.value !is JarvisVoiceState.PAUSED && _isServiceRunning.value) {
                             transitionToWakeWordListening()
                         }
-                    }, 800)
+                    }, 500)
                 }
             )
         }
@@ -306,7 +340,6 @@ class JarvisVoiceService : Service() {
                 if (isTtsEnabled) {
                     speakResponseAndResume(finalResponse)
                 } else {
-                    // Retorna à escuta da palavra-chave
                     transitionToWakeWordListening()
                 }
 
@@ -319,22 +352,16 @@ class JarvisVoiceService : Service() {
 
     private fun speakResponseAndResume(answerText: String) {
         updateState(JarvisVoiceState.SPEAKING)
+        // Suspende microfone/detector antes de falar (Anti-autodisparo)
+        wakeWordDetector?.pauseListening()
+        voiceRecognitionManager.stopAndDestroy()
 
-        // Fala via TTS e aguarda conclusão
-        ttsManager.speak(answerText)
-
-        serviceScope.launch {
-            // Monitora quando o TTS conclui a fala
-            var waited = 0
-            while (ttsManager.isSpeaking.value && waited < 40) {
-                delay(500)
-                waited++
-            }
-            delay(400)
-
-            // Microfone volta a aguardar palavra-chave se ainda estiver rodando
+        ttsManager.speak(answerText) {
+            // Callback oficial onDone do UtteranceProgressListener: sem loops de polling
             if (_isServiceRunning.value && _voiceState.value !is JarvisVoiceState.PAUSED) {
-                transitionToWakeWordListening()
+                mainHandler.post {
+                    transitionToWakeWordListening()
+                }
             }
         }
     }
@@ -359,7 +386,6 @@ class JarvisVoiceService : Service() {
         ttsManager.stop()
         ttsManager.shutdown()
         serviceScope.cancel()
-
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -371,8 +397,6 @@ class JarvisVoiceService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // --- GERENCIAMENTO DE NOTIFICAÇÃO ---
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -380,61 +404,58 @@ class JarvisVoiceService : Service() {
                 "Jarvis — Escuta por Voz",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Notificação de serviço contínuo para ativação pela palavra-chave Jarvis"
+                description = "Notificação persistente da ativação contínua por palavra-chave (Jarvis)."
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            manager.createNotificationChannel(channel)
         }
     }
 
     private fun updateNotification(state: JarvisVoiceState) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        manager?.notify(NOTIFICATION_ID, buildNotification(state))
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification(state))
     }
 
     private fun buildNotification(state: JarvisVoiceState): Notification {
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val openPendingIntent = PendingIntent.getActivity(
+        val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            openAppIntent,
+            launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val pauseIntent = Intent(this, JarvisVoiceService::class.java).apply { action = ACTION_PAUSE }
-        val pausePendingIntent = PendingIntent.getService(
-            this, 1, pauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pausePending = PendingIntent.getService(this, 1, pauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val resumeIntent = Intent(this, JarvisVoiceService::class.java).apply { action = ACTION_RESUME }
-        val resumePendingIntent = PendingIntent.getService(
-            this, 2, resumeIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val resumePending = PendingIntent.getService(this, 2, resumeIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val stopIntent = Intent(this, JarvisVoiceService::class.java).apply { action = ACTION_STOP }
-        val stopPendingIntent = PendingIntent.getService(
-            this, 3, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val stopPending = PendingIntent.getService(this, 3, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Jarvis — Escuta por voz ativa")
-            .setContentText(state.description)
-            .setContentIntent(openPendingIntent)
-            .setOngoing(state !is JarvisVoiceState.PAUSED && state !is JarvisVoiceState.INACTIVE)
+            .setContentText("\${state.label}: \${state.description}")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Palavra-chave: Jarvis
+Status: \${state.label}
+\${state.description}"
+            ))
+            .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
-        // Adiciona botões de ação dinâmicos
         if (state is JarvisVoiceState.PAUSED) {
-            builder.addAction(android.R.drawable.ic_media_play, "Retomar", resumePendingIntent)
+            builder.addAction(android.R.drawable.ic_media_play, "Retomar", resumePending)
         } else {
-            builder.addAction(android.R.drawable.ic_media_pause, "Pausar", pausePendingIntent)
+            builder.addAction(android.R.drawable.ic_media_pause, "Pausar", pausePending)
         }
-        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Encerrar", stopPendingIntent)
+        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Encerrar", stopPending)
 
         return builder.build()
     }

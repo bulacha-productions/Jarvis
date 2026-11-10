@@ -11,11 +11,14 @@ data class BudgetCheckResult(
     val estimatedCost: Double
 )
 
+/**
+ * Gestor financeiro e de restrição de custos do Jarvis.
+ * 
+ * V3.1.1: Preço desconhecido NUNCA é classificado como gratuito.
+ * No modo FREE_ONLY, apenas modelos com gratuidade comprovada oficialmente são autorizados.
+ */
 object FinancialManager {
 
-    /**
-     * Regra inegociável: no modo FREE_ONLY, jamais poderá ser selecionado um modelo pago.
-     */
     fun isModelAllowed(
         model: AIModelInfo,
         policy: FinancialPolicy,
@@ -23,30 +26,37 @@ object FinancialManager {
         monthlyBudget: Double = 5.0,
         estimatedCost: Double = 0.0
     ): Boolean {
+        val isConfirmedFree = model.isFree || model.id.endsWith(":free") ||
+                (model.promptPricePerMillion == 0.0 && model.completionPricePerMillion == 0.0)
+
         return when (policy) {
             FinancialPolicy.FREE_ONLY -> {
-                model.isFree || model.id.endsWith(":free") || (model.promptPricePerMillion == 0.0 && model.completionPricePerMillion == 0.0)
+                // Regra estrita: Preço desconhecido ou não confirmado é bloqueado em FREE_ONLY
+                isConfirmedFree
             }
             FinancialPolicy.PRIORITIZE_FREE -> {
-                // Permite gratuitos diretamente; pagos apenas se dentro do orçamento
-                if (model.isFree || model.id.endsWith(":free")) true
+                if (isConfirmedFree) true
                 else (currentSpend + estimatedCost <= monthlyBudget)
             }
             FinancialPolicy.FREE_AND_PAID -> {
-                if (model.isFree || model.id.endsWith(":free")) true
+                if (isConfirmedFree) true
                 else (currentSpend + estimatedCost <= monthlyBudget)
             }
         }
     }
 
     /**
-     * Estimativa prévia de custo em USD com base no tamanho do prompt e expectativa de tokens.
+     * Estimativa prévia de custo em USD. Modelos com preço desconhecido utilizam taxa padrão de proteção.
      */
     fun estimateCostUsd(model: AIModelInfo, promptLength: Int, expectedCompletionTokens: Int = 800): Double {
-        if (model.isFree || model.id.endsWith(":free")) return 0.0
+        val isConfirmedFree = model.isFree || model.id.endsWith(":free") ||
+                (model.promptPricePerMillion == 0.0 && model.completionPricePerMillion == 0.0)
+        if (isConfirmedFree) return 0.0
+
         val promptTokens = (promptLength / 3.8).toInt().coerceAtLeast(1)
-        val promptPricePerMillion = model.promptPricePerMillion ?: 1.0
-        val completionPricePerMillion = model.completionPricePerMillion ?: 3.0
+        // Se o preço for desconhecido, utiliza tarifa de proteção de US$ 2.00 / 1M prompt e US$ 6.00 / 1M completion
+        val promptPricePerMillion = model.promptPricePerMillion ?: 2.0
+        val completionPricePerMillion = model.completionPricePerMillion ?: 6.0
 
         val promptCost = (promptTokens.toDouble() / 1_000_000.0) * promptPricePerMillion
         val completionCost = (expectedCompletionTokens.toDouble() / 1_000_000.0) * completionPricePerMillion
@@ -63,7 +73,7 @@ object FinancialManager {
             if (estimatedCost > 0.0) {
                 return BudgetCheckResult(
                     isAllowed = false,
-                    reason = "Política de uso restrita a modelos 100% gratuitos. Requisição paga bloqueada.",
+                    reason = "Política restrita a modelos 100% gratuitos. Requisição com custo ou preço não confirmado bloqueada.",
                     currentSpend = currentSpend,
                     monthlyBudget = monthlyBudget,
                     estimatedCost = estimatedCost
@@ -75,7 +85,7 @@ object FinancialManager {
         if (currentSpend + estimatedCost > monthlyBudget) {
             return BudgetCheckResult(
                 isAllowed = false,
-                reason = "Limite de orçamento atingido (Gasto atual: US$ ${String.format("%.2f", currentSpend)} / Orçamento: US$ ${String.format("%.2f", monthlyBudget)}).",
+                reason = "Limite de orçamento atingido (Gasto atual: US$ " + String.format("%.2f", currentSpend) + " / Orçamento: US$ " + String.format("%.2f", monthlyBudget) + ").",
                 currentSpend = currentSpend,
                 monthlyBudget = monthlyBudget,
                 estimatedCost = estimatedCost
@@ -84,7 +94,7 @@ object FinancialManager {
 
         return BudgetCheckResult(
             isAllowed = true,
-            reason = "Custo estimado (US$ ${String.format("%.4f", estimatedCost)}) aprovado dentro do orçamento.",
+            reason = "Custo estimado (US$ " + String.format("%.4f", estimatedCost) + ") aprovado dentro do orçamento mensal.",
             currentSpend = currentSpend,
             monthlyBudget = monthlyBudget,
             estimatedCost = estimatedCost

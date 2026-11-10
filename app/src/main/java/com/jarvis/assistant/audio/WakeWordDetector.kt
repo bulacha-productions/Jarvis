@@ -2,6 +2,7 @@ package com.jarvis.assistant.audio
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,11 +14,11 @@ import android.util.Log
 /**
  * Detector local de palavra-chave (Wake Word) para "Jarvis".
  * 
- * Opera 100% no dispositivo (offline) utilizando o mecanismo nativo de reconhecimento
- * do Android com sinalização EXTRA_PREFER_OFFLINE.
+ * V3.1.1: Prioriza SpeechRecognizer.createOnDeviceSpeechRecognizer() no Android 12+ (API 31+)
+ * com liberação imediata de hardware e backoff suave para evitar loops ruidosos.
  * 
- * Não envia áudio para APIs do Gemini, OpenAI, Claude ou OpenRouter.
- * Não salva arquivos de áudio em disco.
+ * Não envia áudio para APIs de terceiros.
+ * Não salva gravações de áudio no disco.
  */
 class WakeWordDetector(
     private val context: Context,
@@ -27,7 +28,7 @@ class WakeWordDetector(
     companion object {
         private const val TAG = "WakeWordDetector"
         /** Regex fonética tolerante para o português brasileiro */
-        val WAKE_WORD_REGEX = Regex("""(?i)\b(jarvis|jarviz|iarvis|iárvis|charvis|jarvees)\b""")
+        val WAKE_WORD_REGEX = Regex("""(?i)\\b(jarvis|jarviz|iarvis|iárvis|charvis|jarvees)\\b""")
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -36,15 +37,23 @@ class WakeWordDetector(
     private var isPaused = false
     private var isDestroyed = false
     private var restartRunnable: Runnable? = null
+    private var consecutiveErrors = 0
 
     fun isAvailable(): Boolean {
         return SpeechRecognizer.isRecognitionAvailable(context)
+    }
+
+    fun isOnDeviceAvailable(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        } else false
     }
 
     @Synchronized
     fun startListening() {
         if (isDestroyed) return
         isPaused = false
+        consecutiveErrors = 0
         mainHandler.post {
             startInternal()
         }
@@ -63,6 +72,7 @@ class WakeWordDetector(
     fun resumeListening() {
         if (isDestroyed) return
         isPaused = false
+        consecutiveErrors = 0
         mainHandler.post {
             startInternal()
         }
@@ -76,11 +86,6 @@ class WakeWordDetector(
         mainHandler.post {
             cancelRestart()
             stopInternal()
-            try {
-                speechRecognizer?.destroy()
-            } catch (e: Exception) {
-                Log.w(TAG, "Erro ao destruir recognizer", e)
-            }
             speechRecognizer = null
         }
     }
@@ -90,20 +95,20 @@ class WakeWordDetector(
         restartRunnable = null
     }
 
-    private fun scheduleRestart(delayMs: Long = 200) {
+    private fun scheduleRestart(baseDelayMs: Long = 250) {
         if (isPaused || isDestroyed) return
         cancelRestart()
+        val backoff = (baseDelayMs * (1 + consecutiveErrors.coerceAtMost(4))).coerceAtMost(3000)
         restartRunnable = Runnable {
             if (!isPaused && !isDestroyed) {
                 startInternal()
             }
         }
-        mainHandler.postDelayed(restartRunnable!!, delayMs)
+        mainHandler.postDelayed(restartRunnable!!, backoff)
     }
 
     private fun startInternal() {
         if (isPaused || isDestroyed) return
-
         if (!isAvailable()) {
             onError("Reconhecimento de fala indisponível no dispositivo.")
             return
@@ -112,40 +117,44 @@ class WakeWordDetector(
         try {
             stopInternal()
 
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+            val onDevice = isOnDeviceAvailable()
+            speechRecognizer = if (onDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(context)
+            }.apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         isListening = true
+                        consecutiveErrors = 0
                     }
 
                     override fun onBeginningOfSpeech() {}
-
                     override fun onRmsChanged(rmsdB: Float) {}
-
                     override fun onBufferReceived(buffer: ByteArray?) {}
-
                     override fun onEndOfSpeech() {
                         isListening = false
                     }
 
                     override fun onError(error: Int) {
                         isListening = false
+                        consecutiveErrors++
                         when (error) {
                             SpeechRecognizer.ERROR_NO_MATCH,
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                                // Silêncio ou nenhuma fala detectada: reinicia tranquilamente o ciclo
-                                scheduleRestart(150)
+                                // Silêncio ou pausa normal da voz: reinicia ciclo de escuta
+                                scheduleRestart(200)
                             }
                             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
-                                // Ocupado temporariamente: aguarda um pouco mais antes de reiniciar
-                                scheduleRestart(400)
+                                // Ocupado temporariamente: aguarda liberação
+                                scheduleRestart(500)
                             }
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                                onError("Permissão de microfone ausente.")
+                                onError("Permissão RECORD_AUDIO não concedida ao detector de voz.")
                             }
                             else -> {
-                                // Outros erros transitórios: reiniciar com backoff suave
-                                scheduleRestart(350)
+                                // Erro transitório do reconhecedor: backoff suave
+                                scheduleRestart(400)
                             }
                         }
                     }
@@ -154,18 +163,15 @@ class WakeWordDetector(
                         isListening = false
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (checkMatches(matches)) {
-                            // Wake word identificada no resultado final!
                             handleDetection()
                         } else {
-                            // Não continha a palavra-chave: retomar escuta
-                            scheduleRestart(150)
+                            scheduleRestart(200)
                         }
                     }
 
                     override fun onPartialResults(partialResults: Bundle?) {
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (checkMatches(matches)) {
-                            // Wake word identificada instantaneamente nos resultados parciais!
                             handleDetection()
                         }
                     }
@@ -180,16 +186,17 @@ class WakeWordDetector(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "pt-BR")
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                // Solicita modelo local on-device no Android
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                putExtra("android.speech.extra.DICTATION_MODE", true)
+                if (onDevice) {
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
             }
 
             speechRecognizer?.startListening(intent)
             isListening = true
         } catch (e: Exception) {
-            Log.e(TAG, "Falha ao iniciar SpeechRecognizer local", e)
-            scheduleRestart(800)
+            Log.e(TAG, "Falha ao inicializar WakeWordDetector", e)
+            consecutiveErrors++
+            scheduleRestart(1000)
         }
     }
 
@@ -207,11 +214,12 @@ class WakeWordDetector(
         if (isPaused || isDestroyed) return
         isPaused = true
         cancelRestart()
+        // Libera imediatamente o microfone antes de disparar o callback
         stopInternal()
         try {
             onWakeWordDetected()
         } catch (e: Exception) {
-            Log.e(TAG, "Erro no callback onWakeWordDetected", e)
+            Log.e(TAG, "Erro ao processar callback onWakeWordDetected", e)
         }
     }
 
@@ -220,7 +228,7 @@ class WakeWordDetector(
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
         } catch (e: Exception) {
-            Log.w(TAG, "Erro ao parar recognizer", e)
+            Log.w(TAG, "Erro ao destruir recognizer do detector", e)
         }
         speechRecognizer = null
         isListening = false

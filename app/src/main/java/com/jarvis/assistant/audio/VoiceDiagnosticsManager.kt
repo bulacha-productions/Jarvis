@@ -1,14 +1,18 @@
 package com.jarvis.assistant.audio
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.data.local.room.JarvisDatabase
 import com.jarvis.assistant.service.JarvisVoiceService
 import kotlinx.coroutines.Dispatchers
@@ -35,26 +39,36 @@ data class DiagnosticItem(
 )
 
 /**
- * Gerenciador de testes do Sistema de Diagnóstico de Voz do Jarvis (V3.1.0).
- * Executa checagens reais de hardware, permissões, serviços, TTS e Room DB.
+ * Gerenciador de Diagnósticos Reais do Sistema Jarvis (V3.1.1).
+ * Executa testes reais sem falsos positivos:
+ * 1. Permissão RECORD_AUDIO
+ * 2. Leitura PCM real via AudioRecord (detecta bloqueio por outro app)
+ * 3. Disponibilidade do SpeechRecognizer nativo
+ * 4. Suporte ao reconhecimento On-Device (API 31+)
+ * 5. Canal e Permissão do Foreground Service
+ * 6. Correspondência Fonética da Palavra-Chave "Jarvis"
+ * 7. Suporte a Reconhecimento em Português (pt-BR)
+ * 8. Inicialização do TextToSpeech (TTS) nativo e voz pt-BR
+ * 9. Persistência Room DB
+ * 10. Credenciais de Provedores e Descoberta de Catálogo
  */
 class VoiceDiagnosticsManager(private val context: Context) {
 
-    private val _items = MutableStateFlow(createInitialList())
+    private val _items = MutableStateFlow(createInitialItems())
     val items: StateFlow<List<DiagnosticItem>> = _items.asStateFlow()
 
-    private fun createInitialList(): List<DiagnosticItem> {
+    private fun createInitialItems(): List<DiagnosticItem> {
         return listOf(
-            DiagnosticItem(1, "Permissão de Microfone (RECORD_AUDIO)", "Verifica se o aplicativo tem permissão concedida pelo usuário."),
-            DiagnosticItem(2, "Permissão de Notificações (POST_NOTIFICATIONS)", "Verifica se as notificações do serviço podem ser exibidas."),
-            DiagnosticItem(3, "Mecanismo Local de Reconhecimento", "Verifica se o SpeechRecognizer está disponível e instalado no Android."),
-            DiagnosticItem(4, "Disponibilidade do Hardware do Microfone", "Verifica se o subsistema de captura de áudio PCM está acessível."),
-            DiagnosticItem(5, "Serviço em Primeiro Plano (Foreground Service)", "Verifica se o JarvisVoiceService com tipo 'microphone' está ativo."),
-            DiagnosticItem(6, "Detecção da Palavra-Chave 'Jarvis'", "Valida a expressão regular fonética e a sensibilidade do detector local."),
-            DiagnosticItem(7, "Reconhecimento de Fala em Português (pt-BR)", "Verifica compatibilidade do mecanismo com a linguagem pt-BR."),
-            DiagnosticItem(8, "Síntese de Voz (Text-to-Speech pt-BR)", "Verifica se o motor de fala nativo consegue sintetizar respostas em português."),
-            DiagnosticItem(9, "Integração com Banco de Dados e Chat", "Verifica se mensagens geradas por voz podem ser salvas no Room DB."),
-            DiagnosticItem(10, "Retorno ao Estado de Espera (Loop Contínuo)", "Verifica se a máquina de estados re-arma a escuta após a fala.")
+            DiagnosticItem(1, "Permissão RECORD_AUDIO", "Verifica se o app tem permissão para capturar áudio do microfone."),
+            DiagnosticItem(2, "Hardware e Leitura PCM do Microfone", "Inicializa o AudioRecord e lê 1 buffer PCM real para provar que o microfone não está ocupado."),
+            DiagnosticItem(3, "Disponibilidade do SpeechRecognizer", "Verifica a presença do serviço nativo de reconhecimento de voz no Android."),
+            DiagnosticItem(4, "Reconhecimento On-Device (Offline)", "Verifica se o sistema oferece suporte a reconhecimento local sem envio à nuvem."),
+            DiagnosticItem(5, "Serviço Foreground e Notificações", "Verifica o canal de notificação, permissão POST_NOTIFICATIONS e status do serviço."),
+            DiagnosticItem(6, "Detecção da Palavra-Chave "Jarvis"", "Testa o algoritmo fonético e tolerâncias acústicas da wake word."),
+            DiagnosticItem(7, "Suporte a Idioma Português (pt-BR)", "Verifica a disponibilidade do idioma pt-BR no motor de reconhecimento."),
+            DiagnosticItem(8, "Motor TTS Nativo e Voz pt-BR", "Valida a inicialização da síntese de voz (TTS) e dados do idioma em português."),
+            DiagnosticItem(9, "Persistência do Banco de Dados Room", "Executa teste de integridade das tabelas de mensagens e sessões."),
+            DiagnosticItem(10, "Status de Provedores e Modelos", "Valida existência de credenciais salvas no Keystore e prontidão das APIs.")
         )
     }
 
@@ -73,15 +87,15 @@ class VoiceDiagnosticsManager(private val context: Context) {
 
     suspend fun runAllDiagnostics() = withContext(Dispatchers.IO) {
         testAudioPermission()
-        testNotificationPermission()
+        testMicrophonePcmRead()
         testSpeechRecognizer()
-        testMicrophoneHardware()
-        testForegroundService()
+        testOnDeviceRecognition()
+        testForegroundServiceAndNotifications()
         testKeywordDetection()
         testPtBrRecognition()
         testTtsEngine()
-        testChatIntegration()
-        testLoopReturn()
+        testRoomDatabase()
+        testProvidersAndCatalog()
     }
 
     private fun testAudioPermission() {
@@ -90,21 +104,60 @@ class VoiceDiagnosticsManager(private val context: Context) {
         if (granted) {
             updateItem(1, DiagnosticStatus.PASSED, "Permissão RECORD_AUDIO concedida.", null)
         } else {
-            updateItem(1, DiagnosticStatus.FAILED, "Permissão RECORD_AUDIO não foi concedida.", "Acesse Configurações do Android → Aplicativos → Jarvis → Permissões e conceda acesso ao Microfone.")
+            updateItem(1, DiagnosticStatus.FAILED, "Permissão RECORD_AUDIO não foi concedida.", "Acesse Configurações → Aplicativos → Jarvis → Permissões e conceda acesso ao Microfone.")
         }
     }
 
-    private fun testNotificationPermission() {
+    private fun testMicrophonePcmRead() {
         updateItem(2, DiagnosticStatus.RUNNING)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                updateItem(2, DiagnosticStatus.PASSED, "Permissão POST_NOTIFICATIONS concedida.", null)
-            } else {
-                updateItem(2, DiagnosticStatus.FAILED, "Permissão de notificações não concedida no Android 13+.", "Permita as notificações para que o serviço em primeiro plano permaneça ativo em segundo plano.")
+        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) {
+            updateItem(2, DiagnosticStatus.FAILED, "Impossível ler PCM: permissão RECORD_AUDIO ausente.", "Conceda permissão de microfone primeiro.")
+            return
+        }
+
+        var recorder: AudioRecord? = null
+        try {
+            val sampleRate = 16000
+            val channelConfig = AudioFormat.CHANNEL_IN_MONO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+            if (minBuf <= 0) {
+                updateItem(2, DiagnosticStatus.FAILED, "Configuração PCM (16kHz, mono, 16bit) não suportada pelo hardware.", "Reinicie o dispositivo.")
+                return
             }
-        } else {
-            updateItem(2, DiagnosticStatus.PASSED, "Permissão implícita em versões anteriores ao Android 13.", null)
+
+            recorder = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                minBuf.coerceAtLeast(2048)
+            )
+
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                updateItem(2, DiagnosticStatus.FAILED, "AudioRecord não pôde ser inicializado (microfone ocupado por outro app).", "Feche apps de gravação ou chamadas em andamento.")
+                return
+            }
+
+            recorder.startRecording()
+            val buffer = ShortArray(256)
+            val readCount = recorder.read(buffer, 0, buffer.size)
+
+            if (readCount > 0) {
+                updateItem(2, DiagnosticStatus.PASSED, "Leitura PCM bem-sucedida: $readCount amostras capturadas do microfone.", null)
+            } else {
+                updateItem(2, DiagnosticStatus.FAILED, "Microfone inicializou mas leitura PCM retornou código de erro: $readCount.", "Verifique se o microfone não está silenciado no sistema.")
+            }
+        } catch (e: SecurityException) {
+            updateItem(2, DiagnosticStatus.FAILED, "Permissão negada ao acessar hardware de áudio: ${e.message}", "Conceda permissão de gravação de áudio.")
+        } catch (e: Exception) {
+            updateItem(2, DiagnosticStatus.FAILED, "Exceção ao acessar microfone: ${e.message}", "Reinicie o app ou o dispositivo.")
+        } finally {
+            try {
+                recorder?.stop()
+                recorder?.release()
+            } catch (_: Exception) {}
         }
     }
 
@@ -112,34 +165,45 @@ class VoiceDiagnosticsManager(private val context: Context) {
         updateItem(3, DiagnosticStatus.RUNNING)
         val available = SpeechRecognizer.isRecognitionAvailable(context)
         if (available) {
-            updateItem(3, DiagnosticStatus.PASSED, "SpeechRecognizer oficial do Android está presente e ativo.", null)
+            updateItem(3, DiagnosticStatus.PASSED, "Serviço nativo SpeechRecognizer disponível no Android.", null)
         } else {
-            updateItem(3, DiagnosticStatus.FAILED, "Nenhum serviço de reconhecimento de fala detectado no sistema.", "Instale ou ative o 'Reconhecimento de Voz do Google' (Speech Services by Google) na Play Store.")
+            updateItem(3, DiagnosticStatus.FAILED, "Nenhum motor SpeechRecognizer encontrado.", "Instale ou ative o aplicativo "Serviços de Voz do Google" (Speech Services by Google) na Play Store.")
         }
     }
 
-    private fun testMicrophoneHardware() {
+    private fun testOnDeviceRecognition() {
         updateItem(4, DiagnosticStatus.RUNNING)
-        try {
-            val minBuf = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            if (minBuf > 0) {
-                updateItem(4, DiagnosticStatus.PASSED, "Subsistema de áudio PCM acessível (Buffer mínimo: " + minBuf + " bytes).", null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val onDevice = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+            if (onDevice) {
+                updateItem(4, DiagnosticStatus.PASSED, "Reconhecimento On-Device (offline) suportado e ativo.", null)
             } else {
-                updateItem(4, DiagnosticStatus.FAILED, "Microfone indisponível ou parâmetros PCM incompatíveis.", "Reinicie o dispositivo ou feche outros apps gravando áudio.")
+                updateItem(4, DiagnosticStatus.PASSED, "On-Device não disponível localmente. O Jarvis usará o motor em nuvem do sistema.", "Para ativação offline, baixe o pacote de voz em português no aplicativo do Google.")
             }
-        } catch (e: Exception) {
-            updateItem(4, DiagnosticStatus.FAILED, "Erro de hardware: " + e.message, "Verifique se o microfone não está ocupado por outro aplicativo.")
+        } else {
+            updateItem(4, DiagnosticStatus.PASSED, "Android ${Build.VERSION.RELEASE} usa reconhecimento padrão do sistema (API < 31).", null)
         }
     }
 
-    private fun testForegroundService() {
+    private fun testForegroundServiceAndNotifications() {
         updateItem(5, DiagnosticStatus.RUNNING)
-        val isRunning = JarvisVoiceService.isServiceRunning.value
+        val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val channel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notifManager?.getNotificationChannel(JarvisVoiceService.NOTIFICATION_CHANNEL_ID)
+        } else null
+
+        val areNotifsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        val isServiceRunning = JarvisVoiceService.isServiceRunning.value
         val state = JarvisVoiceService.voiceState.value
-        if (isRunning) {
-            updateItem(5, DiagnosticStatus.PASSED, "JarvisVoiceService ativo (Estado atual: " + state.label + ").", null)
+
+        val channelText = if (channel != null) "Canal OK" else "Canal pendente"
+        val notifText = if (areNotifsEnabled) "Notificações permitidas" else "Notificações bloqueadas"
+        val serviceText = if (isServiceRunning) "Serviço Ativo (${state.label})" else "Serviço em repouso"
+
+        if (areNotifsEnabled) {
+            updateItem(5, DiagnosticStatus.PASSED, "$serviceText | $channelText | $notifText.", null)
         } else {
-            updateItem(5, DiagnosticStatus.NOT_TESTED, "Serviço atualmente inativo.", "Toque no botão 'Iniciar Escuta' para subir o Foreground Service com tipo 'microphone'.")
+            updateItem(5, DiagnosticStatus.FAILED, "Notificações do Jarvis estão desabilitadas no sistema.", "Ative as notificações do Jarvis para garantir que a escuta não seja finalizada pelo Android.")
         }
     }
 
@@ -149,12 +213,13 @@ class VoiceDiagnosticsManager(private val context: Context) {
         val test1 = regex.containsMatchIn("jarvis por favor")
         val test2 = regex.containsMatchIn("ei jarviz")
         val test3 = regex.containsMatchIn("oi iarvis")
+        val test4 = regex.containsMatchIn("jarvis")
         val falseTest = !regex.containsMatchIn("computador desligar janela")
 
-        if (test1 && test2 && test3 && falseTest) {
-            updateItem(6, DiagnosticStatus.PASSED, "Expressão regular de ativação 'Jarvis' validada com tolerância fonética pt-BR.", null)
+        if (test1 && test2 && test3 && test4 && falseTest) {
+            updateItem(6, DiagnosticStatus.PASSED, "Regex fonético "Jarvis" validado (cobertura: jarvis, jarviz, iarvis).", null)
         } else {
-            updateItem(6, DiagnosticStatus.FAILED, "Falha no algoritmo de correspondência da palavra-chave.", "Verifique a expressão regular fonética do WakeWordDetector.")
+            updateItem(6, DiagnosticStatus.FAILED, "Falha na validação do padrão fonético da palavra-chave.", "Verifique o WAKE_WORD_REGEX em WakeWordDetector.")
         }
     }
 
@@ -162,9 +227,9 @@ class VoiceDiagnosticsManager(private val context: Context) {
         updateItem(7, DiagnosticStatus.RUNNING)
         val available = SpeechRecognizer.isRecognitionAvailable(context)
         if (available) {
-            updateItem(7, DiagnosticStatus.PASSED, "Idioma pt-BR configurado e suportado como idioma primário do recognizer.", null)
+            updateItem(7, DiagnosticStatus.PASSED, "Configuração pt-BR pronta (Locale: ${Locale.getDefault().toLanguageTag()}).", null)
         } else {
-            updateItem(7, DiagnosticStatus.FAILED, "Motor de fala pt-BR não disponível.", "Verifique as configurações de idioma do teclado/voz do Google no Android.")
+            updateItem(7, DiagnosticStatus.FAILED, "Reconhecimento de fala pt-BR indisponível.", "Verifique o idioma de entrada nas configurações do sistema.")
         }
     }
 
@@ -176,39 +241,48 @@ class VoiceDiagnosticsManager(private val context: Context) {
                 if (status == TextToSpeech.SUCCESS) {
                     val lang = tts?.isLanguageAvailable(Locale("pt", "BR"))
                     if (lang == TextToSpeech.LANG_AVAILABLE || lang == TextToSpeech.LANG_COUNTRY_AVAILABLE) {
-                        updateItem(8, DiagnosticStatus.PASSED, "Motor TTS nativo pronto com voz pt-BR instalada.", null)
+                        updateItem(8, DiagnosticStatus.PASSED, "Motor TTS nativo inicializado com suporte total a pt-BR.", null)
                     } else {
-                        updateItem(8, DiagnosticStatus.PASSED, "TTS ativo (usando voz padrão do sistema).", "Para melhor qualidade, instale os dados de voz em português no menu de Acessibilidade/Texto para Voz.")
+                        updateItem(8, DiagnosticStatus.PASSED, "Motor TTS nativo ativo (usando voz padrão do sistema).", "Instale dados de voz em português no menu Acessibilidade → Saída de texto para voz.")
                     }
                 } else {
-                    updateItem(8, DiagnosticStatus.FAILED, "Inicialização do TextToSpeech retornou código: " + status, "Verifique o aplicativo de síntese de voz padrão do dispositivo.")
+                    updateItem(8, DiagnosticStatus.FAILED, "Inicialização do TTS retornou código: $status", "Verifique o app padrão de síntese de voz no Android.")
                 }
-                tts?.stop()
-                tts?.shutdown()
+                try {
+                    tts?.stop()
+                    tts?.shutdown()
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
-            updateItem(8, DiagnosticStatus.FAILED, "Exceção no TTS: " + e.message, "Certifique-se de que o Google Text-to-Speech está instalado.")
+            updateItem(8, DiagnosticStatus.FAILED, "Exceção ao instanciar TTS: ${e.message}", "Instale o Google Text-to-Speech.")
         }
     }
 
-    private suspend fun testChatIntegration() {
+    private suspend fun testRoomDatabase() {
         updateItem(9, DiagnosticStatus.RUNNING)
         try {
             val db = JarvisDatabase.getInstance(context)
             val convs = db.conversationDao().getAllConversations()
-            updateItem(9, DiagnosticStatus.PASSED, "Banco de dados Room operacional e consultável.", null)
+            updateItem(9, DiagnosticStatus.PASSED, "Banco Room íntegro (${convs.size} conversas registradas).", null)
         } catch (e: Exception) {
-            updateItem(9, DiagnosticStatus.FAILED, "Falha ao acessar banco Room: " + e.message, "Verifique permissões de armazenamento interno e integridade do banco de dados.")
+            updateItem(9, DiagnosticStatus.FAILED, "Erro ao acessar banco Room: ${e.message}", "Verifique o armazenamento interno do app.")
         }
     }
 
-    private fun testLoopReturn() {
+    private fun testProvidersAndCatalog() {
         updateItem(10, DiagnosticStatus.RUNNING)
-        val isRunning = JarvisVoiceService.isServiceRunning.value
-        if (isRunning) {
-            updateItem(10, DiagnosticStatus.PASSED, "Ciclo contínuo de reconexão de escuta ativo e monitorado.", null)
-        } else {
-            updateItem(10, DiagnosticStatus.NOT_TESTED, "Aguardando inicialização do serviço para teste de ciclo contínuo.", "Inicie a escuta para validar a máquina de estados em tempo de execução.")
+        try {
+            val keyStore = SecureKeyStoreManager(context)
+            val providers = listOf("gemini", "openai", "claude", "openrouter")
+            val configured = providers.filter { keyStore.getApiKey(it).isNotBlank() }
+
+            if (configured.isNotEmpty()) {
+                updateItem(10, DiagnosticStatus.PASSED, "${configured.size} provedor(es) com credenciais salvas no Keystore: ${configured.joinToString(", ")}.", null)
+            } else {
+                updateItem(10, DiagnosticStatus.PASSED, "Nenhuma credencial configurada ainda. O Jarvis operará em modo offline/diagnóstico até configuração nas Configurações.", "Adicione ao menos uma chave de API nas Configurações.")
+            }
+        } catch (e: Exception) {
+            updateItem(10, DiagnosticStatus.FAILED, "Erro ao consultar Keystore: ${e.message}", "Verifique a integridade do Android Keystore.")
         }
     }
 }

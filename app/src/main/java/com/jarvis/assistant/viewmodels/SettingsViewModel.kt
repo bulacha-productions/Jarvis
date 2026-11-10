@@ -168,10 +168,18 @@ class SettingsViewModel(
         loadProviders()
     }
 
+    private val runtimeStatuses = mutableMapOf<String, ProviderStatus>()
+    private val runtimeDiscoveredModels = mutableMapOf<String, List<AIModelInfo>>()
+
     fun loadProviders() {
         viewModelScope.launch {
             val enabledSet = preferencesManager.enabledProviders.firstOrNull() ?: setOf("gemini", "openai", "claude", "openrouter")
             val chosenModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
+
+            fun getProviderStatus(id: String, key: String): ProviderStatus {
+                if (key.isBlank()) return ProviderStatus.SEM_CREDENCIAL
+                return runtimeStatuses[id] ?: ProviderStatus.CREDENCIAL_SALVA
+            }
 
             val providerConfigs = listOf(
                 AIProviderConfig(
@@ -180,8 +188,9 @@ class SettingsViewModel(
                     displayName = "Google Gemini",
                     apiKey = secureKeyStore.getApiKey("gemini"),
                     isEnabled = "gemini" in enabledSet,
-                    selectedModel = chosenModels["gemini"] ?: "gemini-2.5-flash",
-                    status = if (secureKeyStore.getApiKey("gemini").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    selectedModel = chosenModels["gemini"] ?: "",
+                    status = getProviderStatus("gemini", secureKeyStore.getApiKey("gemini")),
+                    availableModels = runtimeDiscoveredModels["gemini"] ?: emptyList()
                 ),
                 AIProviderConfig(
                     id = "openai",
@@ -190,7 +199,8 @@ class SettingsViewModel(
                     apiKey = secureKeyStore.getApiKey("openai"),
                     isEnabled = "openai" in enabledSet,
                     selectedModel = chosenModels["openai"] ?: "gpt-4o",
-                    status = if (secureKeyStore.getApiKey("openai").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    status = getProviderStatus("openai", secureKeyStore.getApiKey("openai")),
+                    availableModels = runtimeDiscoveredModels["openai"] ?: emptyList()
                 ),
                 AIProviderConfig(
                     id = "claude",
@@ -199,7 +209,8 @@ class SettingsViewModel(
                     apiKey = secureKeyStore.getApiKey("claude"),
                     isEnabled = "claude" in enabledSet,
                     selectedModel = chosenModels["claude"] ?: "claude-3-5-sonnet-20241022",
-                    status = if (secureKeyStore.getApiKey("claude").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    status = getProviderStatus("claude", secureKeyStore.getApiKey("claude")),
+                    availableModels = runtimeDiscoveredModels["claude"] ?: emptyList()
                 ),
                 AIProviderConfig(
                     id = "openrouter",
@@ -208,13 +219,14 @@ class SettingsViewModel(
                     apiKey = secureKeyStore.getApiKey("openrouter"),
                     isEnabled = "openrouter" in enabledSet,
                     selectedModel = chosenModels["openrouter"] ?: OpenRouterProvider.DEFAULT_FREE_MODEL,
-                    status = if (secureKeyStore.getApiKey("openrouter").isNotBlank()) ProviderStatus.CONNECTED else ProviderStatus.UNCONFIGURED
+                    status = getProviderStatus("openrouter", secureKeyStore.getApiKey("openrouter")),
+                    availableModels = runtimeDiscoveredModels["openrouter"] ?: emptyList()
                 )
             )
+
             _uiState.value = _uiState.value.copy(providers = providerConfigs)
         }
     }
-
 
     fun updateApiKey(providerId: String, apiKey: String) = saveApiKey(providerId, apiKey)
     fun toggleProviderEnabled(providerId: String, isEnabled: Boolean) = toggleProvider(providerId, isEnabled)
@@ -223,6 +235,11 @@ class SettingsViewModel(
 
     fun saveApiKey(providerId: String, apiKey: String) {
         secureKeyStore.saveApiKey(providerId, apiKey)
+        if (apiKey.isBlank()) {
+            runtimeStatuses[providerId] = ProviderStatus.SEM_CREDENCIAL
+        } else {
+            runtimeStatuses[providerId] = ProviderStatus.CREDENCIAL_SALVA
+        }
         loadProviders()
     }
 
@@ -335,22 +352,30 @@ class SettingsViewModel(
 
     fun testConnection(providerId: String) {
         val providerConfig = _uiState.value.providers.find { it.id == providerId } ?: return
+        if (providerConfig.apiKey.isBlank()) {
+            runtimeStatuses[providerId] = ProviderStatus.SEM_CREDENCIAL
+            _uiState.value = _uiState.value.copy(
+                isTestingConnection = false,
+                testResultMessage = "Insira uma chave de API para testar.",
+                lastTestSuccess = false,
+                providers = _uiState.value.providers.map { p ->
+                    if (p.id == providerId) p.copy(status = ProviderStatus.SEM_CREDENCIAL) else p
+                }
+            )
+            return
+        }
+
+        runtimeStatuses[providerId] = ProviderStatus.TESTING
         _uiState.value = _uiState.value.copy(
             isTestingConnection = true,
             testResultMessage = null,
-            lastTestSuccess = null
+            lastTestSuccess = null,
+            providers = _uiState.value.providers.map { p ->
+                if (p.id == providerId) p.copy(status = ProviderStatus.TESTING) else p
+            }
         )
 
         viewModelScope.launch {
-            if (providerConfig.apiKey.isBlank()) {
-                _uiState.value = _uiState.value.copy(
-                    isTestingConnection = false,
-                    testResultMessage = "Insira uma chave de API para testar.",
-                    lastTestSuccess = false
-                )
-                return@launch
-            }
-
             val providerInstance: AIProvider = when (providerConfig.type) {
                 ProviderType.GEMINI -> GeminiProvider(context) { providerConfig.apiKey }
                 ProviderType.OPENAI -> OpenAIProvider(context, { providerConfig.apiKey }, { providerConfig.baseUrl })
@@ -360,43 +385,39 @@ class SettingsViewModel(
             }
 
             val testResult: ConnectionTestResult = providerInstance.testConnection(providerConfig.apiKey, providerConfig.baseUrl)
+            runtimeStatuses[providerId] = testResult.status
 
-            if (testResult.isSuccess) {
-                val updatedModels = if (testResult.discoveredModels.isNotEmpty()) {
-                    testResult.discoveredModels
-                } else {
-                    providerConfig.availableModels
-                }
-
-                _uiState.value = _uiState.value.copy(
-                    isTestingConnection = false,
-                    testResultMessage = "✓ " + testResult.message,
-                    lastTestSuccess = true,
-                    providers = _uiState.value.providers.map { p ->
-                        if (p.id == providerId) {
-                            p.copy(
-                                status = ProviderStatus.CONNECTED,
-                                availableModels = updatedModels,
-                                lastError = null
-                            )
-                        } else p
-                    }
-                )
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    isTestingConnection = false,
-                    testResultMessage = "✗ " + testResult.message,
-                    lastTestSuccess = false,
-                    providers = _uiState.value.providers.map { p ->
-                        if (p.id == providerId) {
-                            p.copy(
-                                status = ProviderStatus.ERROR,
-                                lastError = testResult.message
-                            )
-                        } else p
-                    }
-                )
+            if (testResult.discoveredModels.isNotEmpty()) {
+                runtimeDiscoveredModels[providerId] = testResult.discoveredModels
             }
+
+            val updatedModels = runtimeDiscoveredModels[providerId] ?: providerConfig.availableModels
+            val currentSelected = providerConfig.selectedModel
+            val newSelectedModel = if (updatedModels.isNotEmpty() && (currentSelected.isBlank() || updatedModels.none { it.id == currentSelected })) {
+                updatedModels.first().id
+            } else {
+                currentSelected
+            }
+
+            if (newSelectedModel != currentSelected && newSelectedModel.isNotBlank()) {
+                preferencesManager.setSelectedModel(providerId, newSelectedModel)
+            }
+
+            _uiState.value = _uiState.value.copy(
+                isTestingConnection = false,
+                testResultMessage = if (testResult.isSuccess) "✓ ${testResult.message}" else "✗ ${testResult.message}",
+                lastTestSuccess = testResult.isSuccess,
+                providers = _uiState.value.providers.map { p ->
+                    if (p.id == providerId) {
+                        p.copy(
+                            status = testResult.status,
+                            availableModels = updatedModels,
+                            selectedModel = newSelectedModel,
+                            lastError = if (testResult.isSuccess) null else testResult.message
+                        )
+                    } else p
+                }
+            )
         }
     }
 

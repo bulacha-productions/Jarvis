@@ -13,8 +13,8 @@ android {
         applicationId = "com.jarvis.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "3.1.0"
+        versionCode = 9
+        versionName = "3.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -25,9 +25,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("keystore/jarvis-release.jks")
-            storePassword = "jarvisassistant"
-            keyAlias = "jarvis"
-            keyPassword = "jarvisassistant"
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: (findProperty("KEYSTORE_PASSWORD") as? String) ?: "jarvisassistant"
+            keyAlias = System.getenv("KEY_ALIAS") ?: (findProperty("KEY_ALIAS") as? String) ?: "jarvis"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: (findProperty("KEY_PASSWORD") as? String) ?: "jarvisassistant"
         }
     }
 

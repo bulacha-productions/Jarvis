@@ -8,13 +8,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
+/**
+ * Gerenciador nativo de Text-to-Speech (TTS) em português brasileiro.
+ * V3.1.1: Callbacks 100% orientados a eventos via UtteranceProgressListener,
+ * eliminando esperas fixas e garantindo anti-autodisparo no microfone.
+ */
 class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     private var isInitialized = false
-
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+
+    private var currentOnDoneCallback: (() -> Unit)? = null
 
     init {
         try {
@@ -35,19 +41,37 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
 
                 override fun onDone(utteranceId: String?) {
                     _isSpeaking.value = false
+                    val cb = currentOnDoneCallback
+                    currentOnDoneCallback = null
+                    cb?.invoke()
                 }
 
                 override fun onError(utteranceId: String?) {
                     _isSpeaking.value = false
+                    val cb = currentOnDoneCallback
+                    currentOnDoneCallback = null
+                    cb?.invoke()
                 }
             })
             isInitialized = true
         }
     }
 
-    fun speak(text: String, utteranceId: String = "jarvis_msg_${System.currentTimeMillis()}") {
-        if (!isInitialized || tts == null) return
+    /**
+     * Fala o texto e invoca [onDone] exatamente quando o sintetizador finalizar a reprodução.
+     */
+    fun speak(
+        text: String,
+        utteranceId: String = "jarvis_msg_${System.currentTimeMillis()}",
+        onDone: (() -> Unit)? = null
+    ) {
+        if (!isInitialized || tts == null) {
+            onDone?.invoke()
+            return
+        }
         stop()
+        currentOnDoneCallback = onDone
+
         val cleanText = text
             .replace(Regex("[#*`_\\[\\]()]"), " ")
             .replace(Regex("https?://\\S+"), "link")
@@ -62,6 +86,7 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
             tts?.stop()
         } catch (_: Exception) {}
         _isSpeaking.value = false
+        currentOnDoneCallback = null
     }
 
     fun shutdown() {
@@ -72,5 +97,6 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
         tts = null
         isInitialized = false
         _isSpeaking.value = false
+        currentOnDoneCallback = null
     }
 }

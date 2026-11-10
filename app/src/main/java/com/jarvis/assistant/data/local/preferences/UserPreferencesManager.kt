@@ -264,9 +264,7 @@ class UserPreferencesManager(private val context: Context) {
                 val task = ModelTask.values().find { it.id == taskId } ?: ModelTask.GENERAL_CHAT
                 val providerId = obj.getString("providerId")
                 var modelName = obj.getString("modelName")
-                if (modelName.contains("gemini-1.5")) {
-                    modelName = "gemini-2.5-flash"
-                }
+// Preserva o modelo selecionado pelo usuário sem substituição forçada
                 val level = try { AILevel.valueOf(obj.getString("level")) } catch (_: Exception) { AILevel.MEDIUM }
                 val reason = obj.optString("reason", "")
                 map[taskId] = TaskAssignment(task, providerId, modelName, level, reason)

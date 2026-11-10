@@ -394,12 +394,15 @@ class JarvisSmartRouter(
     }
 
     private fun getDefaultModelForProvider(providerId: String): String {
+        val known = getKnownModels(providerId).firstOrNull()?.id
+        if (!known.isNullOrBlank()) return known
+
         return when (providerId) {
-            "gemini" -> "gemini-2.5-flash"
+            "gemini" -> "gemini-2.0-flash"
             "openai" -> "gpt-4o"
             "claude" -> "claude-3-5-sonnet-20241022"
             "openrouter" -> "meta-llama/llama-3.3-70b-instruct:free"
-            else -> "gemini-2.0-flash"
+            else -> "default"
         }
     }
 }

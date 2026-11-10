@@ -61,7 +61,17 @@ class OpenAIProvider(
                 val json = JSONObject(errorBody)
                 val err = json.optJSONObject("error")
                 if (err != null) {
-                    err.optString("message", errorBody)
+                    val code = err.optString("code", "")
+                    val msg = err.optString("message", "")
+                    if (code == "insufficient_quota" || msg.contains("quota", ignoreCase = true)) {
+                        "Saldo/Créditos insuficientes na conta da OpenAI (Platform API). A assinatura ChatGPT Plus não inclui créditos para a API da OpenAI. Adicione saldo em platform.openai.com/billing."
+                    } else if (code == "invalid_api_key") {
+                        "Chave de API OpenAI inválida ou revogada (HTTP 401). Verifique em platform.openai.com/api-keys."
+                    } else if (msg.isNotBlank()) {
+                        msg
+                    } else {
+                        "Erro HTTP $httpCode: $errorBody"
+                    }
                 } else {
                     errorBody.take(300)
                 }
@@ -103,26 +113,57 @@ class OpenAIProvider(
                 val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
                     val models = parseModels(body)
-                    ConnectionTestResult(
-                        isSuccess = true,
-                        statusCode = response.code,
-                        message = "Conexão com OpenAI estabelecida com sucesso! ${models.size} modelos compatíveis localizados.",
-                        discoveredModels = models
-                    )
+                    if (models.isNotEmpty()) {
+                        ConnectionTestResult(
+                            isSuccess = true,
+                            statusCode = response.code,
+                            message = "Conexão OpenAI validada! ${models.size} modelos de chat compatíveis encontrados.",
+                            status = ProviderStatus.CONEXAO_VALIDADA,
+                            isAuthValid = true,
+                            isCatalogLoaded = true,
+                            discoveredModels = models,
+                            freeModelsCount = 0,
+                            unknownPriceCount = 0
+                        )
+                    } else {
+                        ConnectionTestResult(
+                            isSuccess = true,
+                            statusCode = response.code,
+                            message = "Autenticação aprovada, mas nenhum modelo de chat foi retornado pela OpenAI.",
+                            status = ProviderStatus.NENHUM_MODELO_COMPATIVEL,
+                            isAuthValid = true,
+                            isCatalogLoaded = false,
+                            discoveredModels = emptyList()
+                        )
+                    }
                 } else {
                     val errorMsg = extractErrorMessage(body, response.code)
+                    val status = when (response.code) {
+                        401 -> ProviderStatus.ERRO_DE_AUTENTICACAO
+                        403 -> ProviderStatus.ERRO_DE_PERMISSAO
+                        else -> ProviderStatus.ERRO_DE_REDE
+                    }
                     ConnectionTestResult(
                         isSuccess = false,
                         statusCode = response.code,
-                        message = "Falha ao validar chave OpenAI (HTTP ${response.code}): $errorMsg"
+                        message = "Falha OpenAI [HTTP ${response.code}]: $errorMsg",
+                        status = status,
+                        isAuthValid = false,
+                        isCatalogLoaded = false,
+                        failureReason = errorMsg
                     )
                 }
             }
         } catch (e: Exception) {
+            val netError = "Erro de rede com OpenAI: ${e.message ?: "Conexão falhou"}"
             ConnectionTestResult(
                 isSuccess = false,
                 statusCode = 0,
-                message = "Erro de conexão ao acessar a API OpenAI: ${e.message ?: "Conexão recusada"}"
+                message = netError,
+                status = ProviderStatus.ERRO_DE_REDE,
+                isAuthValid = false,
+                isCatalogLoaded = false,
+                failureReason = netError
             )
         }
     }

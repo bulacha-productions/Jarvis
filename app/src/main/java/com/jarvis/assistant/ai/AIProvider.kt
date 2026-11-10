@@ -15,18 +15,44 @@ enum class ProviderType(val displayName: String) {
     MOCK("Jarvis Core (Offline)")
 }
 
-enum class ProviderStatus {
-    CONNECTED,
-    TESTING,
-    ERROR,
-    UNCONFIGURED
+/**
+ * Estados explícitos e independentes para os provedores de inteligência artificial.
+ * Uma credencial salva NÃO representa uma conexão validada.
+ */
+enum class ProviderStatus(val label: String) {
+    SEM_CREDENCIAL("Sem Credencial"),
+    CREDENCIAL_SALVA("Credencial Salva"),
+    CONEXAO_VALIDADA("Conexão Validada"),
+    ERRO_DE_AUTENTICACAO("Erro de Autenticação"),
+    ERRO_DE_REDE("Erro de Rede"),
+    ERRO_DE_PERMISSAO("Erro de Permissão"),
+    CATALOGO_INDISPONIVEL("Catálogo Indisponível"),
+    NENHUM_MODELO_COMPATIVEL("Nenhum Modelo Compatível"),
+    TESTING("Testando..."),
+
+    // Aliases para retrocompatibilidade
+    CONNECTED("Conexão Validada"),
+    UNCONFIGURED("Sem Credencial"),
+    ERROR("Erro de Conexão");
+
+    val isConnected: Boolean get() = this == CONEXAO_VALIDADA || this == CONNECTED
+    val isKeySaved: Boolean get() = this != SEM_CREDENCIAL && this != UNCONFIGURED
+    val isError: Boolean get() = this == ERRO_DE_AUTENTICACAO || this == ERRO_DE_REDE ||
+            this == ERRO_DE_PERMISSAO || this == CATALOGO_INDISPONIVEL ||
+            this == NENHUM_MODELO_COMPATIVEL || this == ERROR
 }
 
 data class ConnectionTestResult(
     val isSuccess: Boolean,
     val statusCode: Int = 0,
     val message: String = "",
-    val discoveredModels: List<AIModelInfo> = emptyList()
+    val status: ProviderStatus = if (isSuccess) ProviderStatus.CONEXAO_VALIDADA else ProviderStatus.ERRO_DE_REDE,
+    val isAuthValid: Boolean = isSuccess,
+    val isCatalogLoaded: Boolean = false,
+    val discoveredModels: List<AIModelInfo> = emptyList(),
+    val freeModelsCount: Int = 0,
+    val unknownPriceCount: Int = 0,
+    val failureReason: String? = null
 )
 
 data class AIProviderConfig(
@@ -38,8 +64,11 @@ data class AIProviderConfig(
     val baseUrl: String = "",
     val availableModels: List<AIModelInfo> = emptyList(),
     val selectedModel: String = "",
-    val status: ProviderStatus = ProviderStatus.UNCONFIGURED,
-    val lastError: String? = null
+    val status: ProviderStatus = if (apiKey.isNotBlank()) ProviderStatus.CREDENCIAL_SALVA else ProviderStatus.SEM_CREDENCIAL,
+    val lastError: String? = null,
+    val isKeySaved: Boolean = apiKey.isNotBlank(),
+    val isConnectionValidated: Boolean = (status == ProviderStatus.CONEXAO_VALIDADA || status == ProviderStatus.CONNECTED),
+    val isCatalogLoaded: Boolean = availableModels.isNotEmpty()
 )
 
 interface AIProvider {

@@ -193,24 +193,8 @@ class ClaudeProvider(
                 return if (filtered.isNotEmpty()) filtered else remote
             }
         }
-        return listOf(
-            AIModelInfo(
-                id = "claude-3-5-sonnet-20241022",
-                displayName = "Claude 3.5 Sonnet",
-                providerId = id,
-                defaultLevel = AILevel.HIGH,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING, ModelCapability.REASONING),
-                description = "Anthropic Claude 3.5 Sonnet de alta performance"
-            ),
-            AIModelInfo(
-                id = "claude-3-5-haiku-20241022",
-                displayName = "Claude 3.5 Haiku",
-                providerId = id,
-                defaultLevel = AILevel.LIGHT,
-                capabilities = setOf(ModelCapability.TEXT, ModelCapability.IMAGE_ANALYSIS, ModelCapability.CODING),
-                description = "Anthropic Claude 3.5 Haiku veloz"
-            )
-        )
+        // V3.1.1: Sem catálogo fictício quando a chave não puder consultar a API
+        return emptyList()
     }
 
     override fun generateStreamResponse(
@@ -230,12 +214,19 @@ class ClaudeProvider(
 
         val messagesArray = JSONArray()
         var lastRole: String? = null
-        for (msg in history.filter { it.content.isNotBlank() }.takeLast(16)) {
+        for (msg in history.filter { it.content.isNotBlank() }.takeLast(20)) {
             val role = if (msg.isFromUser) "user" else "assistant"
-            if (role != lastRole) {
+            if (role == lastRole && messagesArray.length() > 0) {
+                // V3.1.1: Combina mensagens consecutivas do mesmo papel em vez de descartar
+                val lastMsg = messagesArray.getJSONObject(messagesArray.length() - 1)
+                val existing = lastMsg.optString("content", "")
+                lastMsg.put("content", "$existing
+
+${msg.content.trim()}")
+            } else {
                 val msgObj = JSONObject()
                 msgObj.put("role", role)
-                msgObj.put("content", msg.content)
+                msgObj.put("content", msg.content.trim())
                 messagesArray.put(msgObj)
                 lastRole = role
             }

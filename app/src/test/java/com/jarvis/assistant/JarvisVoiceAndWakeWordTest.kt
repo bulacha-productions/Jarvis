@@ -1,8 +1,14 @@
 package com.jarvis.assistant
 
+import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.audio.DiagnosticStatus
 import com.jarvis.assistant.audio.JarvisVoiceState
 import com.jarvis.assistant.audio.WakeWordDetector
+import com.jarvis.assistant.domain.model.AILevel
+import com.jarvis.assistant.domain.model.AIModelInfo
+import com.jarvis.assistant.domain.model.FinancialPolicy
+import com.jarvis.assistant.domain.model.ModelCapability
+import com.jarvis.assistant.financial.FinancialManager
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -74,9 +80,59 @@ class JarvisVoiceAndWakeWordTest {
     }
 
     @Test
+    fun testProviderStatusStatesAndSemantics() {
+        // Valida que credencial salva NÃO significa conexão validada
+        val credencialSalva = ProviderStatus.CREDENCIAL_SALVA
+        assertTrue("Credencial salva deve indicar chave existente", credencialSalva.isKeySaved)
+        assertFalse("Credencial salva NÃO é conexão validada", credencialSalva.isConnected)
+
+        val semCredencial = ProviderStatus.SEM_CREDENCIAL
+        assertFalse(semCredencial.isKeySaved)
+        assertFalse(semCredencial.isConnected)
+
+        val conexaoValidada = ProviderStatus.CONEXAO_VALIDADA
+        assertTrue(conexaoValidada.isConnected)
+        assertTrue(conexaoValidada.isKeySaved)
+
+        val erroAuth = ProviderStatus.ERRO_DE_AUTENTICACAO
+        assertTrue(erroAuth.isError)
+        assertFalse(erroAuth.isConnected)
+
+        val erroRede = ProviderStatus.ERRO_DE_REDE
+        assertTrue(erroRede.isError)
+
+        val erroPermissao = ProviderStatus.ERRO_DE_PERMISSAO
+        assertTrue(erroPermissao.isError)
+
+        val catalogoIndisponivel = ProviderStatus.CATALOGO_INDISPONIVEL
+        assertTrue(catalogoIndisponivel.isError)
+
+        val nenhumModelo = ProviderStatus.NENHUM_MODELO_COMPATIVEL
+        assertTrue(nenhumModelo.isError)
+    }
+
+    @Test
+    fun testFinancialPolicy_unknownPriceNeverConsideredFree() {
+        val unknownPriceModel = AIModelInfo(
+            id = "custom/unknown-model",
+            displayName = "Custom Unknown Model",
+            providerId = "openrouter",
+            defaultLevel = AILevel.MEDIUM,
+            capabilities = setOf(ModelCapability.TEXT),
+            isFree = false,
+            promptPricePerMillion = null,
+            completionPricePerMillion = null
+        )
+
+        // Preço desconhecido NUNCA pode ser autorizado no modo FREE_ONLY
+        val isAllowedInFreeOnly = FinancialManager.isModelAllowed(unknownPriceModel, FinancialPolicy.FREE_ONLY)
+        assertFalse("Modelo com preço desconhecido deve ser bloqueado em modo FREE_ONLY", isAllowedInFreeOnly)
+    }
+
+    @Test
     fun testVersionNaming() {
-        assertEquals("3.1.0", JarvisVersion.VERSION_NAME)
-        assertEquals(8, JarvisVersion.VERSION_CODE)
-        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.0"))
+        assertEquals("3.1.1", JarvisVersion.VERSION_NAME)
+        assertEquals(9, JarvisVersion.VERSION_CODE)
+        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.1"))
     }
 }

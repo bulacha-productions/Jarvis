@@ -3,35 +3,43 @@ package com.jarvis.assistant.data.local.preferences
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.KeyStoreException
 
 /**
  * Gerenciador seguro de chaves de API utilizando Android Keystore com AES-256 GCM.
  * Não utiliza fallbacks em texto puro para garantir a segurança dos tokens do usuário.
+ * 
+ * V3.1.1: Proteção contra exclusão acidental. Exceções genéricas ou de indisponibilidade
+ * transitória do Keystore nunca provocam a eliminação do arquivo de chaves salvas.
  */
 class SecureKeyStoreManager(context: Context) {
-
-    private val sharedPreferences: SharedPreferences
+    private var sharedPreferences: SharedPreferences? = null
+    var lastError: String? = null
+        private set
 
     init {
         sharedPreferences = try {
             createEncryptedPreferences(context)
         } catch (e: Exception) {
-            // Em caso de corrupção ou reinicialização de Keystore após restauração de sistema,
-            // limpa o arquivo corrompido e recria a MasterKey para prevenir travamentos
+            lastError = e.message ?: "Erro ao acessar Android Keystore"
+            Log.e(TAG, "Aviso ao inicializar EncryptedSharedPreferences (dados preservados): ${e.message}")
+            // Segunda tentativa segura sem apagar o arquivo
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    context.deleteSharedPreferences(PREF_FILE_NAME)
-                }
                 createEncryptedPreferences(context)
-            } catch (fatal: Exception) {
-                throw SecurityException("Falha crítica ao inicializar Android Keystore AES-256: ${fatal.message}", fatal)
+            } catch (retryEx: Exception) {
+                lastError = retryEx.message
+                Log.e(TAG, "Falha persistente no Keystore. Chaves preservadas para recuperação posterior.", retryEx)
+                null
             }
         }
 
-        // Migração pontual e exclusão de arquivo fallback legado se existir
-        migrateLegacyKeysIfAny(context)
+        // Migração pontual de chaves legadas se houver
+        if (sharedPreferences != null) {
+            migrateLegacyKeysIfAny(context)
+        }
     }
 
     private fun createEncryptedPreferences(context: Context): SharedPreferences {
@@ -49,49 +57,56 @@ class SecureKeyStoreManager(context: Context) {
     }
 
     private fun migrateLegacyKeysIfAny(context: Context) {
+        val prefs = sharedPreferences ?: return
         try {
             val legacyPref = context.getSharedPreferences("jarvis_fallback_keys", Context.MODE_PRIVATE)
             val allKeys = legacyPref.all
             if (allKeys.isNotEmpty()) {
-                val editor = sharedPreferences.edit()
+                val editor = prefs.edit()
                 for ((k, v) in allKeys) {
-                    if (v is String && !sharedPreferences.contains(k)) {
+                    if (v is String && !prefs.contains(k)) {
                         editor.putString(k, v)
                     }
                 }
                 editor.apply()
+                // Limpa legado somente após importação segura
                 legacyPref.edit().clear().apply()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    context.deleteSharedPreferences("jarvis_fallback_keys")
-                }
             }
         } catch (_: Exception) {
-            // Silencioso se arquivo legado não existir
+            // Silencioso se arquivo legado não existir ou estiver inacessível
         }
     }
 
+    @Synchronized
     fun saveApiKey(providerId: String, apiKey: String) {
-        sharedPreferences.edit().putString("key_$providerId", apiKey.trim()).apply()
+        val prefs = sharedPreferences
+            ?: throw SecurityException("Armazenamento seguro temporariamente indisponível: ${lastError ?: "Keystore bloqueado"}")
+        prefs.edit().putString("key_$providerId", apiKey.trim()).apply()
     }
 
+    @Synchronized
     fun getApiKey(providerId: String): String {
-        return sharedPreferences.getString("key_$providerId", "") ?: ""
+        val prefs = sharedPreferences ?: return ""
+        return prefs.getString("key_$providerId", "") ?: ""
     }
 
     fun hasKey(providerId: String): Boolean {
         return getApiKey(providerId).isNotBlank()
     }
 
+    @Synchronized
     fun removeApiKey(providerId: String) {
-        sharedPreferences.edit().remove("key_$providerId").apply()
+        val prefs = sharedPreferences ?: return
+        prefs.edit().remove("key_$providerId").apply()
     }
 
     fun isKeystoreFunctional(): Boolean {
+        val prefs = sharedPreferences ?: return false
         return try {
             val testKey = "__keystore_healthcheck__"
-            sharedPreferences.edit().putBoolean(testKey, true).commit()
-            val ok = sharedPreferences.getBoolean(testKey, false)
-            sharedPreferences.edit().remove(testKey).apply()
+            prefs.edit().putBoolean(testKey, true).commit()
+            val ok = prefs.getBoolean(testKey, false)
+            prefs.edit().remove(testKey).apply()
             ok
         } catch (_: Exception) {
             false
@@ -99,6 +114,7 @@ class SecureKeyStoreManager(context: Context) {
     }
 
     companion object {
+        private const val TAG = "SecureKeyStoreManager"
         private const val PREF_FILE_NAME = "jarvis_secure_keystore_v2"
     }
 }
