@@ -43,6 +43,14 @@ class GeminiProvider(
         const val BASE_URL_V1 = "https://generativelanguage.googleapis.com/v1"
         // V3.1.1: Sem fallback forçado a modelos obsoletos
 
+        private val API_KEY_REGEX = Regex("""AIza[0-9A-Za-z_-]{20,50}""")
+        private val URL_KEY_PARAM_REGEX = Regex("""key=[0-9A-Za-z_-]+""")
+
+        fun sanitizeErrorText(text: String): String {
+            return text.replace(API_KEY_REGEX, "[CHAVE_PROTEGIDA]")
+                .replace(URL_KEY_PARAM_REGEX, "key=[CHAVE_PROTEGIDA]")
+        }
+
         fun extractErrorMessage(errorBody: String?, httpCode: Int): String {
             if (errorBody.isNullOrBlank()) {
                 return when (httpCode) {
@@ -59,10 +67,10 @@ class GeminiProvider(
                 val json = JSONObject(errorBody)
                 val errorObj = json.optJSONObject("error")
                 val message = errorObj?.optString("message", "") ?: ""
-                val cleanMessage = message.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]")
-                if (cleanMessage.isNotBlank()) cleanMessage else "Erro HTTP $httpCode: ${errorBody.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]")}"
+                val cleanMessage = sanitizeErrorText(message)
+                if (cleanMessage.isNotBlank()) cleanMessage else "Erro HTTP $httpCode: ${sanitizeErrorText(errorBody)}"
             } catch (_: Exception) {
-                errorBody.replace(Regex("AIza[0-9A-Za-z_-]{35}"), "[CHAVE_PROTEGIDA]").take(250)
+                sanitizeErrorText(errorBody).take(250)
             }
         }
     }
