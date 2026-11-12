@@ -275,10 +275,16 @@ class VoiceDiagnosticsManager(private val context: Context) {
         try {
             val keyStore = SecureKeyStoreManager(context)
             val providers = listOf("gemini", "openai", "claude", "openrouter")
-            val configured = providers.filter { keyStore.getApiKey(it).isNotBlank() }
+            val results = providers.map { p -> p to keyStore.verifyCredential(p) }
+            val stored = results.filter { it.second.isStored }
+            val failedDecryption = stored.filter { !it.second.isDecrypted }
 
-            if (configured.isNotEmpty()) {
-                updateItem(10, DiagnosticStatus.PASSED, "${configured.size} provedor(es) com credenciais salvas no Keystore: ${configured.joinToString(", ")}.", null)
+            if (failedDecryption.isNotEmpty()) {
+                val names = failedDecryption.joinToString(", ") { it.first }
+                updateItem(10, DiagnosticStatus.FAILED, "Falha de descriptografia no Keystore para: $names.", "Abra as Configurações e reinsira as credenciais para re-criptografá-las com a MasterKey atual.")
+            } else if (stored.isNotEmpty()) {
+                val summary = stored.joinToString(", ") { "${it.first} (${it.second.fingerprint ?: "OK"})" }
+                updateItem(10, DiagnosticStatus.PASSED, "${stored.size} provedor(es) com credenciais ativas e descriptografadas com sucesso: $summary.", null)
             } else {
                 updateItem(10, DiagnosticStatus.PASSED, "Nenhuma credencial configurada ainda. O Jarvis operará em modo offline/diagnóstico até configuração nas Configurações.", "Adicione ao menos uma chave de API nas Configurações.")
             }

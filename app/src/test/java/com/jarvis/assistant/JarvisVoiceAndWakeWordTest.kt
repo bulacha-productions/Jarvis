@@ -1,9 +1,11 @@
 package com.jarvis.assistant
 
+import com.jarvis.assistant.ai.GeminiProvider
 import com.jarvis.assistant.ai.ProviderStatus
 import com.jarvis.assistant.audio.DiagnosticStatus
 import com.jarvis.assistant.audio.JarvisVoiceState
 import com.jarvis.assistant.audio.WakeWordDetector
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.domain.model.AILevel
 import com.jarvis.assistant.domain.model.AIModelInfo
 import com.jarvis.assistant.domain.model.FinancialPolicy
@@ -86,6 +88,12 @@ class JarvisVoiceAndWakeWordTest {
         assertTrue("Credencial salva deve indicar chave existente", credencialSalva.isKeySaved)
         assertFalse("Credencial salva NÃO é conexão validada", credencialSalva.isConnected)
 
+        val credencialRecuperada = ProviderStatus.CREDENCIAL_RECUPERADA
+        assertTrue(credencialRecuperada.isKeySaved)
+
+        val falhaDescriptografia = ProviderStatus.FALHA_DESCRIPTOGRAFIA
+        assertTrue(falhaDescriptografia.isError)
+
         val semCredencial = ProviderStatus.SEM_CREDENCIAL
         assertFalse(semCredencial.isKeySaved)
         assertFalse(semCredencial.isConnected)
@@ -112,6 +120,30 @@ class JarvisVoiceAndWakeWordTest {
     }
 
     @Test
+    fun testSecureFingerprintGenerationNeverLeaksKey() {
+        val testKey = "AIzaSyDummySecretKey1234567890abcdef"
+        val fp1 = SecureKeyStoreManager.computeFingerprint(testKey)
+        val fp2 = SecureKeyStoreManager.computeFingerprint(testKey)
+
+        assertEquals("Fingerprints para a mesma chave devem ser idênticas", fp1, fp2)
+        assertTrue("Fingerprint deve ter prefixo SHA256:", fp1.startsWith("SHA256:"))
+        assertFalse("Fingerprint NUNCA deve conter o segredo em texto puro", fp1.contains(testKey))
+        assertFalse("Fingerprint NUNCA deve conter fragmentos do segredo", fp1.contains("AIzaSy"))
+
+        // Chave vazia deve retornar indicador seguro
+        assertEquals("(vazio)", SecureKeyStoreManager.computeFingerprint(""))
+    }
+
+    @Test
+    fun testGeminiErrorMessageScrubbing() {
+        val rawError = "Invalid API key at https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyC123456789012345678901234567890"
+        val cleanError = GeminiProvider.extractErrorMessage(rawError, 400)
+
+        assertFalse("Mensagem não deve conter a chave bruta", cleanError.contains("AIzaSyC123456789012345678901234567890"))
+        assertTrue("Mensagem deve conter a indicação de chave protegida", cleanError.contains("[CHAVE_PROTEGIDA]"))
+    }
+
+    @Test
     fun testFinancialPolicy_unknownPriceNeverConsideredFree() {
         val unknownPriceModel = AIModelInfo(
             id = "custom/unknown-model",
@@ -124,15 +156,14 @@ class JarvisVoiceAndWakeWordTest {
             completionPricePerMillion = null
         )
 
-        // Preço desconhecido NUNCA pode ser autorizado no modo FREE_ONLY
         val isAllowedInFreeOnly = FinancialManager.isModelAllowed(unknownPriceModel, FinancialPolicy.FREE_ONLY)
         assertFalse("Modelo com preço desconhecido deve ser bloqueado em modo FREE_ONLY", isAllowedInFreeOnly)
     }
 
     @Test
     fun testVersionNaming() {
-        assertEquals("3.1.1", JarvisVersion.VERSION_NAME)
-        assertEquals(9, JarvisVersion.VERSION_CODE)
-        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.1"))
+        assertEquals("3.1.2", JarvisVersion.VERSION_NAME)
+        assertEquals(10, JarvisVersion.VERSION_CODE)
+        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.2"))
     }
 }

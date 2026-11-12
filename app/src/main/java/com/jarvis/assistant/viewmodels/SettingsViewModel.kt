@@ -177,7 +177,9 @@ class SettingsViewModel(
             val chosenModels = preferencesManager.selectedModels.firstOrNull() ?: emptyMap()
 
             fun getProviderStatus(id: String, key: String): ProviderStatus {
-                if (key.isBlank()) return ProviderStatus.SEM_CREDENCIAL
+                val verification = secureKeyStore.verifyCredential(id)
+                if (!verification.isStored || key.isBlank()) return ProviderStatus.SEM_CREDENCIAL
+                if (!verification.isDecrypted) return ProviderStatus.FALHA_DESCRIPTOGRAFIA
                 return runtimeStatuses[id] ?: ProviderStatus.CREDENCIAL_SALVA
             }
 
@@ -352,6 +354,20 @@ class SettingsViewModel(
 
     fun testConnection(providerId: String) {
         val providerConfig = _uiState.value.providers.find { it.id == providerId } ?: return
+        val verification = secureKeyStore.verifyCredential(providerId)
+        if (verification.isStored && !verification.isDecrypted) {
+            runtimeStatuses[providerId] = ProviderStatus.FALHA_DESCRIPTOGRAFIA
+            _uiState.value = _uiState.value.copy(
+                isTestingConnection = false,
+                testResultMessage = "✗ Falha ao descriptografar credencial no Android Keystore: ${verification.errorMessage}",
+                lastTestSuccess = false,
+                providers = _uiState.value.providers.map { p ->
+                    if (p.id == providerId) p.copy(status = ProviderStatus.FALHA_DESCRIPTOGRAFIA, lastError = verification.errorMessage) else p
+                }
+            )
+            return
+        }
+
         if (providerConfig.apiKey.isBlank()) {
             runtimeStatuses[providerId] = ProviderStatus.SEM_CREDENCIAL
             _uiState.value = _uiState.value.copy(
@@ -405,7 +421,7 @@ class SettingsViewModel(
 
             _uiState.value = _uiState.value.copy(
                 isTestingConnection = false,
-                testResultMessage = if (testResult.isSuccess) "✓ ${testResult.message}" else "✗ ${testResult.message}",
+                testResultMessage = if (testResult.isSuccess) "✓ ${testResult.message} [Fingerprint: ${verification.fingerprint ?: "OK"}]" else "✗ ${testResult.message}",
                 lastTestSuccess = testResult.isSuccess,
                 providers = _uiState.value.providers.map { p ->
                     if (p.id == providerId) {

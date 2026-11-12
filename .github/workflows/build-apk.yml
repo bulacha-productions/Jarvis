@@ -37,27 +37,25 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v3.1.1-apk
+        name: jarvis-v3.1.2-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v3.1.1-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v3.1.1 (Build ${{ github.run_number }})
+        tag_name: v3.1.2-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v3.1.2 (Build ${{ github.run_number }})
         body: |
-          ### 🎙️ Jarvis Assistant v3.1.1 — Correção Crítica de APIs, Wake Word & Diagnóstico (Build Code 9)
+          ### 🛡️ Jarvis Assistant v3.1.2 — Correção Android Keystore & Restauração de APIs (Build Code 10)
           
-          **Principais Recursos e Inovações da Versão 3.1.0:**
-          - 🗣️ **Detecção Local de Palavra-Chave ("Jarvis"):** Reconhecimento offline local com tolerância fonética no português brasileiro (`pt-BR`). Sem envio constante de áudio a servidores em nuvem, garantindo privacidade, baixo consumo de bateria e latência instantânea.
-          - 🔄 **Foreground Service Especializado (`type="microphone"`):** Serviço em primeiro plano compatível com Android 14, 15 e 16 com notificação persistente, permitindo ativação mesmo com outros apps abertos ou tela bloqueada.
-          - ⚙️ **Máquina de Estados de Voz Rigorosa:** Estados `INACTIVE`, `STARTING`, `LISTENING_FOR_WAKE_WORD`, `WAKE_WORD_DETECTED`, `LISTENING_FOR_COMMAND`, `PROCESSING`, `SPEAKING`, `PAUSED` e `ERROR`, evitando sobreposição de reconhecedores ou autoativação enquanto o assistente fala.
-          - 🔕 **Proteção de Autoativação (Anti Self-Trigger):** O microfone é pausado durante a síntese de voz (TTS), impedindo que a voz do próprio Jarvis dispare comandos acidentalmente.
-          - 📱 **Compatibilidade com Reinicialização (Boot Recovery):** Detecção segura de `BOOT_COMPLETED` em conformidade com as restrições do Android 12+, emitindo notificação interativa com 1 toque para inicialização autorizada do microfone sem violar diretrizes de segundo plano.
-          - 🛠️ **Painel de Diagnóstico Completo (10 Testes):** Verificação individual de permissões (RECORD_AUDIO, POST_NOTIFICATIONS), hardware de microfone, compatibilidade pt-BR, serviço em primeiro plano, regex fonética, TTS nativo e persistência Room.
-          - 🎛️ **Seção de Configurações do Sistema de Voz:** Status em tempo real, ativação automática, confirmação verbal ("Estou ouvindo"), leitura em voz alta (TTS), botões Iniciar, Pausar, Encerrar e testes rápidos de fala e TTS.
-          - 🧠 **Preservação Arquitetural Completa:** Smart Router v3.0, Sistema Multiagente (1 ou 2 especialistas), Catálogo OpenRouter, Políticas Financeiras (Free/Paid), Keystore AES-256 e Histórico Room intactos.
+          **Novidades e Correções da Versão 3.1.2:**
+          - 🔐 **Migração Multi-Store do Android Keystore:** Varredura automática e idempotente de todas as stores legadas (`jarvis_secure_keystore` da v1.1, `jarvis_fallback_keys` da v1.1 e chaves sem prefixo) migrando tudo para `jarvis_secure_keystore_v2` com criptografia MasterKey AES-256 GCM sem perda de dados.
+          - 🚫 **Eliminação de Exclusões Acidentais:** O arquivo de credenciais do Keystore nunca é excluído em exceções genéricas de I/O ou deserialização, garantindo proteção contra perda involuntária de chaves.
+          - 🔒 **Transmissão Segura por Header HTTP (`x-goog-api-key`):** Google Gemini agora transmite a chave de API exclusivamente através do cabeçalho oficial HTTP `x-goog-api-key`, eliminando qualquer chave de parâmetros de URL (`?key=...`) e impedindo vazamentos em logs de rede e proxies.
+          - 🔍 **Fingerprinting Criptográfico Seguro:** Validação local de credenciais descriptografadas exibindo apenas os primeiros 8 dígitos hexadecimais do hash SHA-256 (`SHA256:XXXXXXXX`), sem nunca registrar ou exibir a chave real.
+          - 📊 **Estados de Provedor Aprimorados:** Inclusão dos estados `CREDENCIAL_RECUPERADA` e `FALHA_DESCRIPTOGRAFIA`, integrados à interface de Configurações e ao Painel de Diagnósticos do sistema de voz.
+          - 🎙️ **Wake Word & Smart Router Intactos:** Reconhecimento local da palavra-chave "Jarvis", Foreground Service com `type="microphone"`, anti self-trigger e orquestração multiagente 100% preservados.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

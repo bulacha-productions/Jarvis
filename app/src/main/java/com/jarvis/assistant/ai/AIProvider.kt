@@ -22,7 +22,9 @@ enum class ProviderType(val displayName: String) {
 enum class ProviderStatus(val label: String) {
     SEM_CREDENCIAL("Sem Credencial"),
     CREDENCIAL_SALVA("Credencial Salva"),
+    CREDENCIAL_RECUPERADA("Credencial Recuperada"),
     CONEXAO_VALIDADA("Conexão Validada"),
+    FALHA_DESCRIPTOGRAFIA("Falha de Descriptografia"),
     ERRO_DE_AUTENTICACAO("Erro de Autenticação"),
     ERRO_DE_REDE("Erro de Rede"),
     ERRO_DE_PERMISSAO("Erro de Permissão"),
@@ -39,7 +41,7 @@ enum class ProviderStatus(val label: String) {
     val isKeySaved: Boolean get() = this != SEM_CREDENCIAL && this != UNCONFIGURED
     val isError: Boolean get() = this == ERRO_DE_AUTENTICACAO || this == ERRO_DE_REDE ||
             this == ERRO_DE_PERMISSAO || this == CATALOGO_INDISPONIVEL ||
-            this == NENHUM_MODELO_COMPATIVEL || this == ERROR
+            this == NENHUM_MODELO_COMPATIVEL || this == FALHA_DESCRIPTOGRAFIA || this == ERROR
 }
 
 data class ConnectionTestResult(
@@ -52,7 +54,10 @@ data class ConnectionTestResult(
     val discoveredModels: List<AIModelInfo> = emptyList(),
     val freeModelsCount: Int = 0,
     val unknownPriceCount: Int = 0,
-    val failureReason: String? = null
+    val failureReason: String? = null,
+    val isKeyRecovered: Boolean = true,
+    val keyFingerprint: String? = null,
+    val isDecryptionFailed: Boolean = false
 )
 
 data class AIProviderConfig(

@@ -82,7 +82,8 @@ class GeminiProvider(
         }
 
         val request = Request.Builder()
-            .url("$BASE_URL_V1BETA/models?key=$trimmedKey")
+            .url("$BASE_URL_V1BETA/models")
+            .addHeader("x-goog-api-key", trimmedKey)
             .get()
             .build()
 
@@ -122,7 +123,8 @@ class GeminiProvider(
         }
 
         val request = Request.Builder()
-            .url("$BASE_URL_V1BETA/models?key=$trimmedKey")
+            .url("$BASE_URL_V1BETA/models")
+            .addHeader("x-goog-api-key", trimmedKey)
             .get()
             .build()
 
@@ -429,8 +431,8 @@ class GeminiProvider(
         val body = requestBodyJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val endpoints = listOf(
-            "$BASE_URL_V1BETA/models/$resolvedModel:streamGenerateContent?alt=sse&key=$key",
-            "$BASE_URL_V1/models/$resolvedModel:streamGenerateContent?alt=sse&key=$key"
+            "$BASE_URL_V1BETA/models/$resolvedModel:streamGenerateContent?alt=sse",
+            "$BASE_URL_V1/models/$resolvedModel:streamGenerateContent?alt=sse"
         )
 
         var lastErrorMsg = ""
@@ -439,6 +441,7 @@ class GeminiProvider(
             for (attempt in 1..2) {
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", key)
                     .post(body)
                     .build()
 

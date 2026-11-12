@@ -1099,9 +1099,10 @@ private fun ProviderCard(
                             .background(
                                 when (provider.status) {
                                     ProviderStatus.CONEXAO_VALIDADA, ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
-                                    ProviderStatus.CREDENCIAL_SALVA -> Color(0xFF29B6F6)
+                                    ProviderStatus.CREDENCIAL_SALVA, ProviderStatus.CREDENCIAL_RECUPERADA -> Color(0xFF29B6F6)
                                     ProviderStatus.TESTING -> Color(0xFFFFA000)
                                     ProviderStatus.SEM_CREDENCIAL, ProviderStatus.UNCONFIGURED -> Color.Gray
+                                    ProviderStatus.FALHA_DESCRIPTOGRAFIA -> Color(0xFFD32F2F)
                                     else -> Color(0xFFEF5350)
                                 }
                             )
@@ -1113,9 +1114,10 @@ private fun ProviderCard(
                             style = MaterialTheme.typography.labelSmall,
                             color = when (provider.status) {
                                 ProviderStatus.CONEXAO_VALIDADA, ProviderStatus.CONNECTED -> Color(0xFF4CAF50)
-                                ProviderStatus.CREDENCIAL_SALVA -> Color(0xFF29B6F6)
+                                ProviderStatus.CREDENCIAL_SALVA, ProviderStatus.CREDENCIAL_RECUPERADA -> Color(0xFF29B6F6)
                                 ProviderStatus.TESTING -> Color(0xFFFFA000)
                                 ProviderStatus.SEM_CREDENCIAL, ProviderStatus.UNCONFIGURED -> MaterialTheme.colorScheme.onSurfaceVariant
+                                ProviderStatus.FALHA_DESCRIPTOGRAFIA -> Color(0xFFD32F2F)
                                 else -> Color(0xFFEF5350)
                             }
                         )
