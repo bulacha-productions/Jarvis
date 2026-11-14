@@ -178,8 +178,8 @@ class SettingsViewModel(
 
             val providerConfigs = descriptors.map { (id, type, displayName) ->
                 val credResult = secureKeyStore.getCredential(id)
-                val persistedModels = catalogRepository.getModels(id)
-                val catalogError = catalogRepository.getCatalogError(id)
+                val persistedModels = catalogRepository.getModelsForProvider(id)
+                val catalogError = catalogRepository.getLastError(id)
 
                 val (status, masked, fingerprint, errMsg, isKeySaved, isDecryptionFailed) = when (credResult) {
                     is CredentialLookupResult.Success -> {
@@ -542,7 +542,7 @@ class SettingsViewModel(
                 if (testResult.isSuccess) null else testResult.message
             )
 
-            val updatedModels = catalogRepository.getModels(providerId)
+            val updatedModels = catalogRepository.getModelsForProvider(providerId)
             val currentSelected = preferencesManager.selectedModels.firstOrNull()?.get(providerId)?.trim().orEmpty()
             val preservedSelected = when {
                 updatedModels.isEmpty() -> currentSelected

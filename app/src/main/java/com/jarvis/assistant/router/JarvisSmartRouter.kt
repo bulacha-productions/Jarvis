@@ -36,7 +36,7 @@ class JarvisSmartRouter(
     }
 
     fun getKnownModels(providerId: String): List<AIModelInfo> {
-        val persisted = catalogRepository?.getModels(providerId)?.filter { it.isEnabled }
+        val persisted = catalogRepository?.getModelsForProvider(providerId)?.filter { it.isEnabled }
         if (!persisted.isNullOrEmpty()) return persisted
         return modelCatalogCache[providerId]?.filter { it.isEnabled } ?: emptyList()
     }
