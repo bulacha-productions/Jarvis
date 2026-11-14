@@ -37,25 +37,24 @@ jobs:
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: jarvis-v3.1.2-apk
+        name: jarvis-v3.1.3-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Create Release with Direct APK Download
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v3.1.2-build-${{ github.run_number }}
-        name: Jarvis Assistant APK v3.1.2 (Build ${{ github.run_number }})
+        tag_name: v3.1.3-build-${{ github.run_number }}
+        name: Jarvis Assistant APK v3.1.3 (Build ${{ github.run_number }})
         body: |
-          ### 🛡️ Jarvis Assistant v3.1.2 — Correção Android Keystore & Restauração de APIs (Build Code 10)
-          
-          **Novidades e Correções da Versão 3.1.2:**
-          - 🔐 **Migração Multi-Store do Android Keystore:** Varredura automática e idempotente de todas as stores legadas (`jarvis_secure_keystore` da v1.1, `jarvis_fallback_keys` da v1.1 e chaves sem prefixo) migrando tudo para `jarvis_secure_keystore_v2` com criptografia MasterKey AES-256 GCM sem perda de dados.
-          - 🚫 **Eliminação de Exclusões Acidentais:** O arquivo de credenciais do Keystore nunca é excluído em exceções genéricas de I/O ou deserialização, garantindo proteção contra perda involuntária de chaves.
-          - 🔒 **Transmissão Segura por Header HTTP (`x-goog-api-key`):** Google Gemini agora transmite a chave de API exclusivamente através do cabeçalho oficial HTTP `x-goog-api-key`, eliminando qualquer chave de parâmetros de URL (`?key=...`) e impedindo vazamentos em logs de rede e proxies.
-          - 🔍 **Fingerprinting Criptográfico Seguro:** Validação local de credenciais descriptografadas exibindo apenas os primeiros 8 dígitos hexadecimais do hash SHA-256 (`SHA256:XXXXXXXX`), sem nunca registrar ou exibir a chave real.
-          - 📊 **Estados de Provedor Aprimorados:** Inclusão dos estados `CREDENCIAL_RECUPERADA` e `FALHA_DESCRIPTOGRAFIA`, integrados à interface de Configurações e ao Painel de Diagnósticos do sistema de voz.
-          - 🎙️ **Wake Word & Smart Router Intactos:** Reconhecimento local da palavra-chave "Jarvis", Foreground Service com `type="microphone"`, anti self-trigger e orquestração multiagente 100% preservados.
+          ### 🛠️ Jarvis Assistant v3.1.3 — Reconstrução da Arquitetura de Integrações (Build Code 11)
+
+          **Principais Melhorias da Versão 3.1.3 (Baseada na estabilidade da V2.0.2 + recursos V3):**
+          - 🧵 **Correção Definitiva de Threading (`Dispatchers.IO`):** `GeminiProvider` e `OpenRouterProvider` agora executam `testConnection` e `queryRemoteModels` em `Dispatchers.IO`, eliminando `NetworkOnMainThreadException`.
+          - 🔐 **Keystore Singleton Seguro e Previsível:** Instância única (`getInstance`) com migração não-destrutiva (v1.1 + v2), sem sobrescrever chaves durante digitação e sem expor credenciais completas na interface.
+          - 📦 **Catálogo Independente Persistido:** Modelos descobertos via API (Gemini paginado, OpenAI filtrado, Anthropic Claude, OpenRouter `/models`) são persistidos por provedor sem fallback fictício.
+          - 🧠 **Smart Router Integrado ao Catálogo Real:** Respeita exatamente o provedor/modelo selecionado (ex.: `gemini-3.1-flash-lite`), política financeira e exibe o provedor/modelo escolhido ou o motivo de falha.
+          - 💬 **Histórico Normalizado sem Duplicação:** Eliminação de corrida entre salvamento no Room e leitura do histórico no `ChatViewModel`; alternância estrita no Gemini e Claude.
         files: app/build/outputs/apk/debug/app-debug.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

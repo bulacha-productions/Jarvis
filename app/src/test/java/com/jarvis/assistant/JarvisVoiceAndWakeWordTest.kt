@@ -162,8 +162,8 @@ class JarvisVoiceAndWakeWordTest {
 
     @Test
     fun testVersionNaming() {
-        assertEquals("3.1.2", JarvisVersion.VERSION_NAME)
-        assertEquals(10, JarvisVersion.VERSION_CODE)
-        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.2"))
+        assertEquals("3.1.3", JarvisVersion.VERSION_NAME)
+        assertEquals(11, JarvisVersion.VERSION_CODE)
+        assertTrue(JarvisVersion.BUILD_LABEL.contains("3.1.3"))
     }
 }

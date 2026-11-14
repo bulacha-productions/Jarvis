@@ -3,7 +3,6 @@ package com.jarvis.assistant.agent
 import com.jarvis.assistant.JarvisVersion
 import com.jarvis.assistant.ai.AIProvider
 import com.jarvis.assistant.domain.model.*
-import com.jarvis.assistant.financial.FinancialManager
 import com.jarvis.assistant.router.JarvisSmartRouter
 import com.jarvis.assistant.router.RequestAnalysis
 import com.jarvis.assistant.tools.ToolRegistry
@@ -14,6 +13,7 @@ class MultiAgentOrchestrator(
     private val providers: List<AIProvider>,
     private val smartRouter: JarvisSmartRouter = JarvisSmartRouter(providers)
 ) {
+
     companion object {
         const val MAX_AGENT_STEPS = 4
     }
@@ -36,18 +36,16 @@ class MultiAgentOrchestrator(
         monthlyBudget: Double = 5.0,
         openAiApiKey: String? = null
     ): Flow<String> = flow {
-        // 1. Análise inteligente da solicitação via Smart Router
         val analysis = smartRouter.analyzeRequest(prompt, history, attachment)
 
-        // 2. Determinar se executará como Agente Único ou Multiagente
         val shouldUseMultiAgent: Boolean = when {
             !isMultiAgentEnabled -> false
             multiAgentMode == MultiAgentMode.ONE_AGENT -> false
             multiAgentMode == MultiAgentMode.TWO_AGENTS -> true
-            else -> analysis.recommendedAgentCount > 1 // MultiAgentMode.AUTOMATIC
+            else -> analysis.recommendedAgentCount > 1
         }
 
-        // Cenário A: Execução com Agente Único (Menor Latência e Custo Mínimo)
+        // Cenário A: Agente Único
         if (!shouldUseMultiAgent) {
             val targetTask = analysis.task
             val targetLevel = overrideLevel ?: analysis.complexity
@@ -67,11 +65,21 @@ class MultiAgentOrchestrator(
                 promptLength = prompt.length
             )
 
-            val provider = providers.find { it.id == decision.providerId } ?: providers.firstOrNull { it.isAvailable() }
-            if (provider == null) {
-                emit("Nenhum provedor de IA com chave configurada está disponível. Acesse Configurações para ativar Google Gemini, OpenAI, Claude ou OpenRouter.")
+            if (!decision.isSuccess) {
+                emit(
+                    decision.failureReason
+                        ?: "Nenhum provedor/modelo elegível disponível. Acesse Configurações para ativar um provedor e testar a conexão."
+                )
                 return@flow
             }
+
+            val provider = providers.find { it.id == decision.providerId }
+            if (provider == null) {
+                emit("Provedor '${decision.providerId}' não encontrado na arquitetura do aplicativo.")
+                return@flow
+            }
+
+            emit("> 🔀 **Rota:** ${decision.providerDisplayName} • `${decision.modelId}`\n\n")
 
             val buffer = StringBuilder()
             provider.generateStreamResponse(
@@ -85,20 +93,14 @@ class MultiAgentOrchestrator(
                 emit(chunk)
             }
 
-            // Sanitização de ferramentas e geração de imagens
-            val finalOutput = buffer.toString()
-            val sanitized = ToolRegistry.processOrSanitizeOutput(finalOutput, openAiApiKey)
-            if (sanitized != finalOutput) {
-                // Se o modelo vazou JSON de ferramenta, substitui pelo resultado limpo da ferramenta
-                // No caso do stream já emitido, emitimos uma correção explicativa se necessário
-            }
+            ToolRegistry.processOrSanitizeOutput(buffer.toString(), openAiApiKey)
             return@flow
         }
 
-        // Cenário B: Execução Multiagente (Dois Especialistas ou Automático)
+        // Cenário B: Execução Multiagente
         val plan = createExecutionPlan(prompt, analysis, multiAgentMode)
-
         val agentBadgesHeader = plan.participatingAgents.joinToString(" ") { "[${it.iconEmoji} ${it.shortBadge}]" }
+
         emit("🤖 **JARVIS v${JarvisVersion.VERSION_NAME} — Coordenação Multiagente**\n")
         emit("Modo: **${multiAgentMode.displayName}** | Especialistas: $agentBadgesHeader\n\n")
 
@@ -109,8 +111,6 @@ class MultiAgentOrchestrator(
         for (step in plan.steps) {
             stepCounter++
             if (stepCounter > MAX_AGENT_STEPS) break
-
-            emit("⏳ *[Passo $stepCounter/${plan.steps.size}: ${step.agent.displayName} executando...]*\n\n")
 
             val decision = smartRouter.selectModelAndProvider(
                 task = step.assignedTask,
@@ -127,11 +127,28 @@ class MultiAgentOrchestrator(
                 promptLength = step.promptInstruction.length
             )
 
-            val provider = providers.find { it.id == decision.providerId } ?: providers.firstOrNull { it.isAvailable() }
-            if (provider == null) {
-                emit("⚠️ [Aviso: Provedor para ${step.agent.displayName} indisponível. Etapa omitida.]\n\n")
+            if (!decision.isSuccess) {
+                val failMsg = decision.failureReason ?: "Roteamento indisponível para ${step.agent.displayName}."
+                emit("⚠️ *[Passo $stepCounter/${plan.steps.size}: $failMsg]*\n\n")
+                intermediateResults.add(
+                    AgentStepResult(
+                        stepIndex = stepCounter,
+                        agent = step.agent,
+                        summary = "Falha de roteamento",
+                        content = failMsg,
+                        isSuccess = false
+                    )
+                )
                 continue
             }
+
+            val provider = providers.find { it.id == decision.providerId }
+            if (provider == null) {
+                emit("⚠️ *[Aviso: Provedor '${decision.providerId}' indisponível. Etapa omitida.]*\n\n")
+                continue
+            }
+
+            emit("⏳ *[Passo $stepCounter/${plan.steps.size}: ${step.agent.displayName} via ${decision.providerDisplayName} • `${decision.modelId}`]*\n\n")
 
             val enrichedPrompt = if (accumulatedContext.isNotBlank()) {
                 "${step.promptInstruction}\n\n[Contexto e Entregas das Etapas Anteriores]:\n$accumulatedContext"
@@ -140,21 +157,19 @@ class MultiAgentOrchestrator(
             }
 
             val stepOutputBuilder = StringBuilder()
-            var stepFailed = false
             try {
                 provider.generateStreamResponse(
                     prompt = enrichedPrompt,
-                    history = history,
+                    history = if (stepCounter == 1) history else emptyList(),
                     level = step.targetLevel,
                     modelName = decision.modelId,
-                    attachment = attachment
+                    attachment = if (stepCounter == 1) attachment else null
                 ).collect { chunk ->
                     stepOutputBuilder.append(chunk)
                 }
 
                 val resultText = stepOutputBuilder.toString().trim()
-                if (resultText.startsWith("Erro ") || resultText.startsWith("Falha ")) {
-                    stepFailed = true
+                if (resultText.startsWith("Erro ") || resultText.startsWith("Falha ") || resultText.startsWith("Erro:")) {
                     intermediateResults.add(
                         AgentStepResult(
                             stepIndex = stepCounter,
@@ -178,7 +193,6 @@ class MultiAgentOrchestrator(
                     accumulatedContext += "\n--- [Entrega do ${step.agent.displayName}] ---\n" + sanitized.take(1800)
                 }
             } catch (e: Exception) {
-                stepFailed = true
                 intermediateResults.add(
                     AgentStepResult(
                         stepIndex = stepCounter,
@@ -191,9 +205,6 @@ class MultiAgentOrchestrator(
             }
         }
 
-        // Síntese e Consolidação pelo Jarvis Central
-        emit("✨ **[Jarvis Central: Consolidando Síntese Final Integrada...]**\n\n")
-
         val successfulResults = intermediateResults.filter { it.isSuccess }
         if (successfulResults.isEmpty()) {
             val errorsSummary = intermediateResults.joinToString("\n") { "- ${it.agent.displayName}: ${it.content}" }
@@ -201,7 +212,6 @@ class MultiAgentOrchestrator(
             return@flow
         }
 
-        // Escolhe o modelo mais adequado para a síntese final
         val synthDecision = smartRouter.selectModelAndProvider(
             task = ModelTask.GENERAL_CHAT,
             targetLevel = AILevel.HIGH,
@@ -217,9 +227,10 @@ class MultiAgentOrchestrator(
             promptLength = 300
         )
 
-        val synthProvider = providers.find { it.id == synthDecision.providerId } ?: providers.firstOrNull { it.isAvailable() }
-
+        val synthProvider = if (synthDecision.isSuccess) providers.find { it.id == synthDecision.providerId } else null
         if (synthProvider != null) {
+            emit("> 🔀 **Rota (Síntese):** ${synthDecision.providerDisplayName} • `${synthDecision.modelId}`\n\n")
+            emit("✨ **[Jarvis Central: Consolidando Síntese Final Integrada...]**\n\n")
             val synthesisPrompt = buildString {
                 append("Você é o JARVIS Central (Coordenador). Seus agentes especialistas executaram as tarefas da solicitação do usuário:\n\n")
                 successfulResults.forEach { res ->
@@ -233,7 +244,6 @@ class MultiAgentOrchestrator(
             }
 
             try {
-                val synthBuffer = StringBuilder()
                 synthProvider.generateStreamResponse(
                     prompt = synthesisPrompt,
                     history = history,
@@ -241,11 +251,9 @@ class MultiAgentOrchestrator(
                     modelName = synthDecision.modelId,
                     attachment = null
                 ).collect { chunk ->
-                    synthBuffer.append(chunk)
                     emit(chunk)
                 }
             } catch (_: Exception) {
-                // Em caso de falha do sintetizador, entrega as contribuições dos especialistas diretamente
                 successfulResults.forEach { res ->
                     emit("### ${res.agent.displayName}\n${res.content}\n\n")
                 }
@@ -291,7 +299,6 @@ class MultiAgentOrchestrator(
                 AgentRole.CREATIVE -> ModelTask.CREATIVE_WRITING
                 else -> ModelTask.RESEARCH
             }
-
             steps.add(
                 AgentTaskStep(
                     stepIndex = 2,
@@ -312,7 +319,6 @@ class MultiAgentOrchestrator(
             )
         }
 
-        // Padrão automático com 1 especialista + sintetizador
         val singleAgent = analysis.primaryAgent
         steps.add(
             AgentTaskStep(

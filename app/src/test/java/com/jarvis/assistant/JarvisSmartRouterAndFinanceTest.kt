@@ -1,6 +1,10 @@
 package com.jarvis.assistant
 
 import com.jarvis.assistant.agent.AgentRole
+import com.jarvis.assistant.ai.ClaudeProvider
+import com.jarvis.assistant.ai.OpenAIProvider
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
+import com.jarvis.assistant.repositories.ModelCatalogRepository
 import com.jarvis.assistant.domain.model.*
 import com.jarvis.assistant.financial.FinancialManager
 import com.jarvis.assistant.router.JarvisSmartRouter
@@ -106,5 +110,119 @@ class JarvisSmartRouterAndFinanceTest {
         assertFalse(sanitizedOutput.contains("{\"action\""))
         assertTrue(sanitizedOutput.contains("Solicitação de Imagem Identificada"))
         assertTrue(sanitizedOutput.contains("Prompt Sugerido"))
+    }
+
+    @Test
+    fun testOpenAIAndClaudeModelParsingAndHistoryNormalization() {
+        val openaiJson = """
+        {
+          "data": [
+            {"id": "gpt-4o"},
+            {"id": "gpt-4o-realtime-preview"},
+            {"id": "gpt-3.5-turbo-instruct"},
+            {"id": "whisper-1"},
+            {"id": "o4-mini"}
+          ]
+        }
+        """.trimIndent()
+        val openaiModels = OpenAIProvider.parseModelsFromJson(openaiJson).map { it.id }
+        assertTrue(openaiModels.contains("gpt-4o"))
+        assertTrue(openaiModels.contains("o4-mini"))
+        assertFalse(openaiModels.contains("gpt-4o-realtime-preview"))
+        assertFalse(openaiModels.contains("gpt-3.5-turbo-instruct"))
+        assertFalse(openaiModels.contains("whisper-1"))
+
+        val history = listOf(
+            Message("1", "c1", "Saudação inicial do assistente", false, 1L),
+            Message("2", "c1", "Pergunta 1", true, 2L),
+            Message("3", "c1", "Pergunta 2", true, 3L),
+            Message("4", "c1", "Pergunta atual", true, 4L)
+        )
+        val claudeMessages = ClaudeProvider.buildNormalizedMessages(history, "Pergunta atual")
+        assertEquals(1, claudeMessages.length())
+        assertEquals("user", claudeMessages.getJSONObject(0).getString("role"))
+        val merged = claudeMessages.getJSONObject(0).getString("content")
+        assertFalse(merged.contains("Saudação inicial"))
+        assertTrue(merged.contains("Pergunta 1"))
+        assertTrue(merged.contains("Pergunta atual"))
+    }
+
+    @Test
+    fun testSmartRouter_manualOverrideAndCatalogPersistenceAndFreeOnlyBlock() = runBlocking {
+        val repo = ModelCatalogRepository.inMemoryForTests()
+        val geminiModel = AIModelInfo(
+            id = "gemini-3.1-flash-lite",
+            displayName = "Gemini 3.1 Flash Lite",
+            providerId = "gemini",
+            defaultLevel = AILevel.LIGHT,
+            capabilities = setOf(ModelCapability.TEXT),
+            isFree = true,
+            promptPricePerMillion = 0.0,
+            completionPricePerMillion = 0.0
+        )
+        val paidOpenAIModel = AIModelInfo(
+            id = "gpt-4o",
+            displayName = "GPT-4o",
+            providerId = "openai",
+            defaultLevel = AILevel.HIGH,
+            capabilities = setOf(ModelCapability.TEXT, ModelCapability.CODING),
+            isFree = false,
+            promptPricePerMillion = 2.5,
+            completionPricePerMillion = 10.0
+        )
+        repo.saveDiscoveredModels("gemini", listOf(geminiModel))
+        repo.saveDiscoveredModels("openai", listOf(paidOpenAIModel))
+
+        val providers = listOf(
+            TestAIProvider("gemini", com.jarvis.assistant.ai.ProviderType.GEMINI, "Google Gemini", listOf(geminiModel)),
+            TestAIProvider("openai", com.jarvis.assistant.ai.ProviderType.OPENAI, "OpenAI", listOf(paidOpenAIModel))
+        )
+        val router = JarvisSmartRouter(providers, repo)
+
+        // Manual override must respect manualProviderId & exact selected model even if routingMode is AUTOMATIC
+        val manualDecision = router.selectModelAndProvider(
+            task = ModelTask.CODING,
+            targetLevel = AILevel.HIGH,
+            routingMode = RoutingMode.AUTOMATIC,
+            preferredProviderId = null,
+            manualProviderId = "gemini",
+            manualModelId = "gemini-3.1-flash-lite",
+            enabledProviders = setOf("gemini", "openai"),
+            selectedModels = mapOf("gemini" to "gemini-3.1-flash-lite"),
+            financialPolicy = FinancialPolicy.FREE_ONLY,
+            currentSpend = 0.0,
+            monthlyBudget = 5.0
+        )
+        assertTrue(manualDecision.isSuccess)
+        assertEquals("gemini", manualDecision.providerId)
+        assertEquals("gemini-3.1-flash-lite", manualDecision.modelId)
+
+        // FREE_ONLY must block paid OpenAI manual selection cleanly with failureReason
+        val blockedDecision = router.selectModelAndProvider(
+            task = ModelTask.CODING,
+            targetLevel = AILevel.HIGH,
+            routingMode = RoutingMode.MANUAL,
+            preferredProviderId = null,
+            manualProviderId = "openai",
+            manualModelId = "gpt-4o",
+            enabledProviders = setOf("gemini", "openai"),
+            selectedModels = mapOf("openai" to "gpt-4o"),
+            financialPolicy = FinancialPolicy.FREE_ONLY,
+            currentSpend = 0.0,
+            monthlyBudget = 5.0
+        )
+        assertFalse(blockedDecision.isSuccess)
+        assertNotNull(blockedDecision.failureReason)
+    }
+
+    @Test
+    fun testSecureKeyStoreMaskAndFingerprintNeverLeakSecret() {
+        val raw = "AIzaSySecretKey1234567890ABCDEF"
+        val masked = SecureKeyStoreManager.maskApiKey(raw)
+        val fp = SecureKeyStoreManager.computeFingerprint(raw)
+        assertEquals("••••CDEF", masked)
+        assertFalse(masked.contains("SecretKey"))
+        assertTrue(fp.startsWith("SHA256:"))
+        assertFalse(fp.contains("SecretKey"))
     }
 }

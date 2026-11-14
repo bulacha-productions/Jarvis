@@ -139,7 +139,6 @@ fun SettingsScreen(
     val diagnosticsItems by viewModel.diagnosticsItems.collectAsState()
 
 
-    var showKeyForProviderId by remember { mutableStateOf<String?>(null) }
     var providerToAddModel by remember { mutableStateOf<AIProviderConfig?>(null) }
 
     Scaffold(
@@ -598,13 +597,9 @@ fun SettingsScreen(
                     settingsState.providers.forEach { provider ->
                         ProviderCard(
                             provider = provider,
-                            isKeyVisible = showKeyForProviderId == provider.id,
-                            onToggleKeyVisibility = {
-                                showKeyForProviderId = if (showKeyForProviderId == provider.id) null else provider.id
-                            },
-                            onKeyChanged = { newKey -> viewModel.updateApiKey(provider.id, newKey) },
+                            onSaveKey = { newKey -> viewModel.saveProviderKey(provider.id, newKey) },
                             onToggleEnabled = { isEnabled -> viewModel.toggleProviderEnabled(provider.id, isEnabled) },
-                            onTestConnection = { viewModel.testConnection(provider.id) },
+                            onTestConnection = { draftKey -> viewModel.testConnection(provider.id, draftKey) },
                             onRemoveKey = { viewModel.removeApiKey(provider.id) },
                             onOpenAddModel = { providerToAddModel = provider },
                             onToggleModel = { modelId, isEnabled ->
@@ -1061,11 +1056,9 @@ private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vect
 @Composable
 private fun ProviderCard(
     provider: AIProviderConfig,
-    isKeyVisible: Boolean,
-    onToggleKeyVisibility: () -> Unit,
-    onKeyChanged: (String) -> Unit,
+    onSaveKey: (String) -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
-    onTestConnection: () -> Unit,
+    onTestConnection: (String?) -> Unit,
     onRemoveKey: () -> Unit,
     onOpenAddModel: () -> Unit,
     onToggleModel: (String, Boolean) -> Unit,
@@ -1073,28 +1066,28 @@ private fun ProviderCard(
     onRefreshModels: () -> Unit
 ) {
     var expandedModels by remember { mutableStateOf(false) }
+    var draftKey by remember(provider.id) { mutableStateOf("") }
+    var isDraftVisible by remember(provider.id) { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (provider.isEnabled) ElectricOrange.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(12.dp)
+                            .size(10.dp)
                             .clip(CircleShape)
                             .background(
                                 when (provider.status) {
@@ -1133,31 +1126,115 @@ private fun ProviderCard(
                 )
             }
 
-            OutlinedTextField(
-                value = provider.apiKey,
-                onValueChange = onKeyChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Chave de API") },
-                placeholder = { Text("Insira sua chave...") },
-                visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    Row {
-                        IconButton(onClick = onToggleKeyVisibility) {
-                            Icon(
-                                if (isKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "Mostrar/Ocultar"
+            if (provider.isKeySaved) {
+                Surface(
+                    color = Color(0xFF1B5E20).copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Chave Protegida no Keystore: ${provider.maskedKey}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF4CAF50)
                             )
-                        }
-                        if (provider.apiKey.isNotBlank()) {
-                            IconButton(onClick = onRemoveKey) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = "Remover Chave", tint = Color.Red)
+                            provider.keyFingerprint?.let { fp ->
+                                Text(
+                                    text = "Fingerprint: $fp",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
+                        TextButton(onClick = onRemoveKey) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Remover Chave", tint = Color(0xFFEF5350), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Remover", style = MaterialTheme.typography.labelSmall, color = Color(0xFFEF5350))
+                        }
+                    }
+                }
+            }
+
+            if (provider.isDecryptionFailed || !provider.lastError.isNullOrBlank()) {
+                Surface(
+                    color = Color(0xFFB71C1C).copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF5350).copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = provider.lastError ?: "Falha de descriptografia no Android Keystore. Reinsira sua chave abaixo.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFEF5350),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = draftKey,
+                onValueChange = { draftKey = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(if (provider.isKeySaved) "Substituir Chave de API" else "Nova Chave de API") },
+                placeholder = { Text("Cole sua chave para salvar com AES-256...") },
+                visualTransformation = if (isDraftVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { isDraftVisible = !isDraftVisible }) {
+                        Icon(
+                            if (isDraftVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "Mostrar/Ocultar Digitação"
+                        )
                     }
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val toSave = draftKey.trim()
+                        if (toSave.isNotEmpty()) {
+                            onSaveKey(toSave)
+                            draftKey = ""
+                            isDraftVisible = false
+                        }
+                    },
+                    enabled = draftKey.isNotBlank(),
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricOrange, contentColor = Color.Black)
+                ) {
+                    Text(text = "Salvar Chave", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        val candidate = draftKey.trim().takeIf { it.isNotEmpty() }
+                        onTestConnection(candidate)
+                        if (candidate != null) {
+                            draftKey = ""
+                            isDraftVisible = false
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp), tint = ElectricOrange)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(text = "Testar Conexão", style = MaterialTheme.typography.labelMedium)
+                }
+            }
 
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
@@ -1181,10 +1258,10 @@ private fun ProviderCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = provider.selectedModel,
+                            text = provider.selectedModel.ifBlank { "Nenhum selecionado" },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = ElectricOrange,
+                            color = if (provider.selectedModel.isNotBlank()) ElectricOrange else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
                     }
@@ -1198,18 +1275,9 @@ private fun ProviderCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = onTestConnection,
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp), tint = ElectricOrange)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Testar Conexão", style = MaterialTheme.typography.labelMedium)
-                }
-
                 TextButton(onClick = { expandedModels = !expandedModels }) {
                     Text(
                         text = if (expandedModels) "Ocultar Modelos" else "Gerenciar Modelos (${provider.availableModels.size})",
@@ -1223,11 +1291,29 @@ private fun ProviderCard(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp),
+                        .padding(top = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (provider.availableModels.isEmpty()) {
+                        Text(
+                            text = "Nenhum modelo carregado ainda. Salve uma chave válida e toque em 'Testar Conexão' para consultar os modelos reais da API.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
                     provider.availableModels.forEach { model ->
                         val isCurrentSelected = provider.selectedModel == model.id
+                        val priceLabel = when {
+                            model.isFree -> "GRATUITO"
+                            model.promptPricePerMillion != null -> "PAGO"
+                            else -> "PREÇO DESCONHECIDO"
+                        }
+                        val priceColor = when {
+                            model.isFree -> Color(0xFF4CAF50)
+                            model.promptPricePerMillion != null -> ElectricOrange
+                            else -> Color(0xFFFFA000)
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1271,16 +1357,16 @@ private fun ProviderCard(
                                                     text = "ATIVO",
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                                     style = MaterialTheme.typography.labelSmall,
-                                                    color = androidx.compose.ui.graphics.Color.Black,
+                                                    color = Color.Black,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             }
                                         }
                                     }
                                     Text(
-                                        text = model.id,
+                                        text = "${model.id} • $priceLabel",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = priceColor
                                     )
                                     Text(
                                         text = model.capabilities.joinToString(", ") { it.displayName },
@@ -1297,7 +1383,6 @@ private fun ProviderCard(
                             )
                         }
                     }
-
                     TextButton(
                         onClick = onOpenAddModel,
                         modifier = Modifier.align(Alignment.End)
@@ -1330,7 +1415,7 @@ private fun AddCustomModelDialog(
                 OutlinedTextField(
                     value = modelId,
                     onValueChange = { modelId = it },
-                    label = { Text("ID do Modelo (ex: gemini-2.0-flash)") },
+                    label = { Text("ID do Modelo (ex: gemini-3.1-flash-lite)") },
                     singleLine = true
                 )
                 OutlinedTextField(

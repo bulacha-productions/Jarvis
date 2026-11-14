@@ -34,6 +34,7 @@ import com.jarvis.assistant.domain.model.FinancialPolicy
 import com.jarvis.assistant.domain.model.MultiAgentMode
 import com.jarvis.assistant.domain.model.RoutingMode
 import com.jarvis.assistant.repositories.ChatRepository
+import com.jarvis.assistant.repositories.ModelCatalogRepository
 import com.jarvis.assistant.router.JarvisRouter
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -179,7 +180,8 @@ class JarvisVoiceService : Service() {
     private fun initializeComponents() {
         val appCtx = applicationContext
         preferencesManager = UserPreferencesManager(appCtx)
-        secureKeyStore = SecureKeyStoreManager(appCtx)
+        secureKeyStore = SecureKeyStoreManager.getInstance(appCtx)
+        val catalogRepository = ModelCatalogRepository.getInstance(appCtx)
         val database = JarvisDatabase.getInstance(appCtx)
         chatRepository = ChatRepository(database.conversationDao(), database.messageDao())
 
@@ -187,7 +189,7 @@ class JarvisVoiceService : Service() {
         val openai = OpenAIProvider(appCtx, { secureKeyStore.getApiKey("openai") })
         val claude = ClaudeProvider(appCtx) { secureKeyStore.getApiKey("claude") }
         val openRouter = OpenRouterProvider(appCtx) { secureKeyStore.getApiKey("openrouter") }
-        router = JarvisRouter(listOf(gemini, openai, claude, openRouter))
+        router = JarvisRouter(listOf(gemini, openai, claude, openRouter), catalogRepository, secureKeyStore)
 
         ttsManager = TTSManager(appCtx)
         voiceRecognitionManager = VoiceRecognitionManager(appCtx)

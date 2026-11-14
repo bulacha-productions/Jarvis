@@ -22,6 +22,7 @@ import com.jarvis.assistant.data.local.preferences.UserPreferencesManager
 import com.jarvis.assistant.data.local.room.JarvisDatabase
 import com.jarvis.assistant.navigation.JarvisNavGraph
 import com.jarvis.assistant.repositories.ChatRepository
+import com.jarvis.assistant.repositories.ModelCatalogRepository
 import com.jarvis.assistant.router.JarvisRouter
 import com.jarvis.assistant.ui.theme.JarvisTheme
 import com.jarvis.assistant.viewmodels.ChatViewModel
@@ -38,7 +39,8 @@ class MainActivity : ComponentActivity() {
 
         val database = JarvisDatabase.getInstance(applicationContext)
         val preferencesManager = UserPreferencesManager(applicationContext)
-        val secureKeyStore = SecureKeyStoreManager(applicationContext)
+        val secureKeyStore = SecureKeyStoreManager.getInstance(applicationContext)
+        val catalogRepository = ModelCatalogRepository.getInstance(applicationContext)
         val chatRepository = ChatRepository(database.conversationDao(), database.messageDao())
 
         val geminiProvider = GeminiProvider(applicationContext) { secureKeyStore.getApiKey("gemini") }
@@ -46,7 +48,7 @@ class MainActivity : ComponentActivity() {
         val claudeProvider = ClaudeProvider(applicationContext) { secureKeyStore.getApiKey("claude") }
         val openRouterProvider = OpenRouterProvider(applicationContext) { secureKeyStore.getApiKey("openrouter") }
 
-        val router = JarvisRouter(listOf(geminiProvider, openaiProvider, claudeProvider, openRouterProvider))
+        val router = JarvisRouter(listOf(geminiProvider, openaiProvider, claudeProvider, openRouterProvider), catalogRepository, secureKeyStore)
 
         val chatViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -65,7 +67,7 @@ class MainActivity : ComponentActivity() {
         val settingsViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return SettingsViewModel(applicationContext, preferencesManager, secureKeyStore) as T
+                return SettingsViewModel(applicationContext, preferencesManager, secureKeyStore, catalogRepository) as T
             }
         })[SettingsViewModel::class.java]
 

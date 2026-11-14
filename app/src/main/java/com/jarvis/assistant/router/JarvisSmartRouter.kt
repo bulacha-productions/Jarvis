@@ -2,8 +2,11 @@ package com.jarvis.assistant.router
 
 import com.jarvis.assistant.agent.AgentRole
 import com.jarvis.assistant.ai.AIProvider
+import com.jarvis.assistant.data.local.preferences.CredentialLookupResult
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.domain.model.*
 import com.jarvis.assistant.financial.FinancialManager
+import com.jarvis.assistant.repositories.ModelCatalogRepository
 import java.util.concurrent.ConcurrentHashMap
 
 data class RequestAnalysis(
@@ -19,27 +22,25 @@ data class RequestAnalysis(
 )
 
 class JarvisSmartRouter(
-    val providers: List<AIProvider>
+    val providers: List<AIProvider>,
+    private val catalogRepository: ModelCatalogRepository? = null,
+    private val keyStore: SecureKeyStoreManager? = null
 ) {
-    // Catálogo dinâmico de modelos por provedor (preserva modelos descobertos)
     private val modelCatalogCache = ConcurrentHashMap<String, List<AIModelInfo>>()
 
-    /**
-     * Atualiza o catálogo de modelos consultados via API.
-     */
     fun updateCatalog(providerId: String, models: List<AIModelInfo>) {
         if (models.isNotEmpty()) {
             modelCatalogCache[providerId] = models
+            catalogRepository?.saveDiscoveredModels(providerId, models)
         }
     }
 
     fun getKnownModels(providerId: String): List<AIModelInfo> {
-        return modelCatalogCache[providerId] ?: emptyList()
+        val persisted = catalogRepository?.getModels(providerId)?.filter { it.isEnabled }
+        if (!persisted.isNullOrEmpty()) return persisted
+        return modelCatalogCache[providerId]?.filter { it.isEnabled } ?: emptyList()
     }
 
-    /**
-     * Análise inteligente da solicitação sem acionamento de modelos caros.
-     */
     fun analyzeRequest(
         prompt: String,
         history: List<Message>,
@@ -48,16 +49,15 @@ class JarvisSmartRouter(
         val trimmed = prompt.trim()
         val lower = trimmed.lowercase()
 
-        // 1. Verificação de anexos
         val hasImageAttachment = attachment?.mimeType?.startsWith("image/") == true ||
-                attachment?.name?.endsWith(".jpg", ignoreCase = true) == true ||
-                attachment?.name?.endsWith(".png", ignoreCase = true) == true ||
-                attachment?.name?.endsWith(".webp", ignoreCase = true) == true
+            attachment?.name?.endsWith(".jpg", ignoreCase = true) == true ||
+            attachment?.name?.endsWith(".png", ignoreCase = true) == true ||
+            attachment?.name?.endsWith(".webp", ignoreCase = true) == true
 
         val hasDocAttachment = attachment?.mimeType?.contains("pdf") == true ||
-                attachment?.mimeType?.contains("document") == true ||
-                attachment?.name?.endsWith(".pdf", ignoreCase = true) == true ||
-                attachment?.name?.endsWith(".docx", ignoreCase = true) == true
+            attachment?.mimeType?.contains("document") == true ||
+            attachment?.name?.endsWith(".pdf", ignoreCase = true) == true ||
+            attachment?.name?.endsWith(".docx", ignoreCase = true) == true
 
         if (hasImageAttachment) {
             return RequestAnalysis(
@@ -87,7 +87,6 @@ class JarvisSmartRouter(
             )
         }
 
-        // 2. Indicadores semânticos de Programação
         val codingKeywords = listOf(
             "fun ", "def ", "class ", "import ", "const ", "let ", "val ", "var ",
             "interface ", "public static", "select ", "from ", "where ", "código", "codigo",
@@ -96,33 +95,28 @@ class JarvisSmartRouter(
         )
         val hasCodingIntent = codingKeywords.any { lower.contains(it) }
 
-        // 3. Indicadores de Raciocínio Complexo e Lógica
         val reasoningKeywords = listOf(
             "calcule", "resolva", "prove que", "deduza", "passo a passo", "paradoxo",
             "teorema", "lógica", "raciocínio", "raciocinio", "matemática", "probabilidade"
         )
         val hasReasoningIntent = reasoningKeywords.any { lower.contains(it) }
 
-        // 4. Indicadores de Pesquisa e Comparação
         val researchKeywords = listOf(
             "pesquise", "compare", "diferença entre", "vantagens e desvantagens",
             "história de", "artigo científico", "estudo de mercado", "investigue"
         )
         val hasResearchIntent = researchKeywords.any { lower.contains(it) }
 
-        // 5. Indicadores de Escrita Criativa
         val creativeKeywords = listOf(
             "crie uma história", "poema", "redija", "escreva um conto", "roteiro",
             "copywriting", "artigo criativo", "slogan", "ideias para"
         )
         val hasCreativeIntent = creativeKeywords.any { lower.contains(it) }
 
-        // 6. Consultas Simples e Rápidas
         val isShort = trimmed.length < 40
         val isDirectQuestion = lower.startsWith("o que é") || lower.startsWith("quem foi") ||
-                lower.startsWith("quanto é") || lower.startsWith("qual a capital") ||
-                lower.startsWith("como se diz")
-
+            lower.startsWith("quanto é") || lower.startsWith("qual a capital") ||
+            lower.startsWith("como se diz")
         if (isShort && isDirectQuestion && !hasCodingIntent && !hasReasoningIntent) {
             return RequestAnalysis(
                 task = ModelTask.QUICK_QUESTIONS,
@@ -137,7 +131,6 @@ class JarvisSmartRouter(
             )
         }
 
-        // Decomposição de tarefas compostas (Dois especialistas)
         if (hasCodingIntent && hasResearchIntent) {
             return RequestAnalysis(
                 task = ModelTask.CODING,
@@ -250,7 +243,6 @@ class JarvisSmartRouter(
             )
         }
 
-        // Padrão Geral
         return RequestAnalysis(
             task = ModelTask.GENERAL_CHAT,
             complexity = AILevel.MEDIUM,
@@ -264,9 +256,53 @@ class JarvisSmartRouter(
         )
     }
 
-    /**
-     * Seleção inteligente de modelo respeitando o modo de roteamento e política financeira.
-     */
+    private suspend fun inspectProviderReadiness(provider: AIProvider): Pair<Boolean, String?> {
+        if (keyStore != null) {
+            return when (val cred = keyStore.getCredential(provider.id)) {
+                is CredentialLookupResult.Success -> true to null
+                is CredentialLookupResult.Missing -> false to "Chave de API para ${provider.displayName} não configurada."
+                is CredentialLookupResult.DecryptionFailure -> false to "Falha de descriptografia no Keystore para ${provider.displayName}: ${cred.reason}"
+            }
+        }
+        return if (provider.isAvailable()) {
+            true to null
+        } else {
+            false to "Chave de API para ${provider.displayName} não configurada."
+        }
+    }
+
+    private suspend fun resolveModelsForProvider(provider: AIProvider, targetLevel: AILevel): List<AIModelInfo> {
+        val known = getKnownModels(provider.id)
+        if (known.isNotEmpty()) return known
+        val remote = try {
+            provider.getAvailableModels(targetLevel)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (remote.isNotEmpty()) {
+            updateCatalog(provider.id, remote)
+        }
+        return remote
+    }
+
+    private fun buildModelInfoForSelection(
+        providerId: String,
+        modelId: String,
+        targetLevel: AILevel,
+        task: ModelTask
+    ): AIModelInfo {
+        val existing = getKnownModels(providerId).find { it.id == modelId }
+        if (existing != null) return existing
+        return AIModelInfo(
+            id = modelId,
+            displayName = modelId,
+            providerId = providerId,
+            defaultLevel = targetLevel,
+            capabilities = setOf(task.requiredCapability),
+            isFree = providerId == "gemini"
+        )
+    }
+
     suspend fun selectModelAndProvider(
         task: ModelTask,
         targetLevel: AILevel,
@@ -281,128 +317,228 @@ class JarvisSmartRouter(
         monthlyBudget: Double,
         promptLength: Int = 100
     ): SmartRoutingDecision {
-        val activeProviders = providers.filter { it.id in enabledProviders && it.isAvailable() }
+        val readinessErrors = mutableListOf<String>()
+        val activeProviders = mutableListOf<AIProvider>()
+        for (provider in providers) {
+            if (provider.id !in enabledProviders) continue
+            val (ready, err) = inspectProviderReadiness(provider)
+            if (ready) {
+                activeProviders.add(provider)
+            } else if (!err.isNullOrBlank()) {
+                readinessErrors.add(err)
+            }
+        }
 
-        // MODO 1: MANUAL (Usuário escolheu o provedor e modelo explicitamente)
-        if (routingMode == RoutingMode.MANUAL && !manualProviderId.isNullOrBlank()) {
-            val provider = activeProviders.find { it.id == manualProviderId }
-            if (provider != null) {
-                val modelId = manualModelId?.ifBlank { selectedModels[provider.id] } ?: ""
-                val resolvedModelId = modelId.ifBlank { getDefaultModelForProvider(provider.id) }
-                return SmartRoutingDecision(
-                    providerId = provider.id,
-                    modelId = resolvedModelId,
+        // MODO 1: MANUAL (Respeita explicitamente manualProviderId mesmo se routingMode vier inconsistente)
+        if ((routingMode == RoutingMode.MANUAL || !manualProviderId.isNullOrBlank()) && !manualProviderId.isNullOrBlank()) {
+            val provider = providers.find { it.id == manualProviderId }
+                ?: return SmartRoutingDecision(
+                    providerId = "",
+                    modelId = "",
                     agentName = task.title,
-                    reason = "Seleção manual definida pelo usuário.",
+                    reason = "Provedor manual não localizado.",
                     isAutomatic = false,
-                    wasFallback = false,
-                    estimatedCostUsd = 0.0,
-                    isFree = resolvedModelId.endsWith(":free") || provider.id == "gemini"
+                    isSuccess = false,
+                    failureReason = "Provedor manual '$manualProviderId' não está registrado."
+                )
+
+            if (provider.id !in enabledProviders) {
+                return SmartRoutingDecision(
+                    providerId = "",
+                    modelId = "",
+                    agentName = task.title,
+                    reason = "Provedor manual desativado.",
+                    isAutomatic = false,
+                    isSuccess = false,
+                    providerDisplayName = provider.displayName,
+                    failureReason = "O provedor selecionado manualmente (${provider.displayName}) está desativado nas Configurações."
                 )
             }
+
+            val (ready, err) = inspectProviderReadiness(provider)
+            if (!ready) {
+                return SmartRoutingDecision(
+                    providerId = "",
+                    modelId = "",
+                    agentName = task.title,
+                    reason = err ?: "Credencial indisponível.",
+                    isAutomatic = false,
+                    isSuccess = false,
+                    providerDisplayName = provider.displayName,
+                    failureReason = err ?: "Credencial indisponível para ${provider.displayName}."
+                )
+            }
+
+            val catalogModels = resolveModelsForProvider(provider, targetLevel)
+            val resolvedModelId = manualModelId?.trim()?.ifBlank { null }
+                ?: selectedModels[provider.id]?.trim()?.ifBlank { null }
+                ?: catalogModels.firstOrNull { it.defaultLevel == targetLevel }?.id
+                ?: catalogModels.firstOrNull()?.id
+
+            if (resolvedModelId.isNullOrBlank()) {
+                return SmartRoutingDecision(
+                    providerId = "",
+                    modelId = "",
+                    agentName = task.title,
+                    reason = "Sem modelo selecionado.",
+                    isAutomatic = false,
+                    isSuccess = false,
+                    providerDisplayName = provider.displayName,
+                    failureReason = "Nenhum modelo selecionado ou descoberto para ${provider.displayName}. Acesse Configurações e toque em 'Testar Conexão' para listar os modelos reais."
+                )
+            }
+
+            val modelInfo = buildModelInfoForSelection(provider.id, resolvedModelId, targetLevel, task)
+            val estCost = FinancialManager.estimateCostUsd(modelInfo, promptLength)
+            if (!FinancialManager.isModelAllowed(modelInfo, financialPolicy, currentSpend, monthlyBudget, estCost)) {
+                val budgetReason = FinancialManager.validateBudget(estCost, currentSpend, monthlyBudget, financialPolicy).reason
+                return SmartRoutingDecision(
+                    providerId = "",
+                    modelId = "",
+                    agentName = task.title,
+                    reason = "Bloqueado pela política financeira.",
+                    isAutomatic = false,
+                    isSuccess = false,
+                    providerDisplayName = provider.displayName,
+                    failureReason = "Modelo '$resolvedModelId' (${provider.displayName}) bloqueado: $budgetReason"
+                )
+            }
+
+            return SmartRoutingDecision(
+                providerId = provider.id,
+                modelId = resolvedModelId,
+                agentName = task.title,
+                reason = "Seleção manual definida pelo usuário.",
+                isAutomatic = false,
+                wasFallback = false,
+                estimatedCostUsd = estCost,
+                isFree = modelInfo.isFree,
+                isSuccess = true,
+                providerDisplayName = provider.displayName
+            )
+        }
+
+        if (activeProviders.isEmpty()) {
+            val detail = readinessErrors.firstOrNull()
+                ?: "Nenhum provedor de IA com chave válida está ativado nas Configurações."
+            return SmartRoutingDecision(
+                providerId = "",
+                modelId = "",
+                agentName = task.title,
+                reason = "Sem provedores disponíveis.",
+                isAutomatic = true,
+                isSuccess = false,
+                failureReason = detail
+            )
         }
 
         // MODO 2: AUTOMÁTICO COM PREFERÊNCIA
         if (routingMode == RoutingMode.AUTOMATIC_WITH_PREFERENCE && !preferredProviderId.isNullOrBlank()) {
             val preferred = activeProviders.find { it.id == preferredProviderId }
             if (preferred != null) {
-                val modelId = selectedModels[preferred.id]?.ifBlank { getDefaultModelForProvider(preferred.id) }
-                    ?: getDefaultModelForProvider(preferred.id)
-                val modelInfo = AIModelInfo(
-                    id = modelId,
-                    displayName = modelId,
-                    providerId = preferred.id,
-                    defaultLevel = targetLevel,
-                    capabilities = setOf(task.requiredCapability),
-                    isFree = modelId.endsWith(":free") || preferred.id == "gemini"
-                )
-                if (FinancialManager.isModelAllowed(modelInfo, financialPolicy, currentSpend, monthlyBudget)) {
+                val catalogModels = resolveModelsForProvider(preferred, targetLevel)
+                val preferredModelId = selectedModels[preferred.id]?.trim()?.ifBlank { null }
+                    ?: catalogModels.firstOrNull {
+                        FinancialManager.isModelAllowed(it, financialPolicy, currentSpend, monthlyBudget)
+                    }?.id
+                if (!preferredModelId.isNullOrBlank()) {
+                    val modelInfo = buildModelInfoForSelection(preferred.id, preferredModelId, targetLevel, task)
+                    val estCost = FinancialManager.estimateCostUsd(modelInfo, promptLength)
+                    if (FinancialManager.isModelAllowed(modelInfo, financialPolicy, currentSpend, monthlyBudget, estCost)) {
+                        return SmartRoutingDecision(
+                            providerId = preferred.id,
+                            modelId = preferredModelId,
+                            agentName = task.title,
+                            reason = "Provedor preferencial do usuário selecionado.",
+                            isAutomatic = true,
+                            wasFallback = false,
+                            estimatedCostUsd = estCost,
+                            isFree = modelInfo.isFree,
+                            isSuccess = true,
+                            providerDisplayName = preferred.displayName
+                        )
+                    }
+                }
+            }
+        }
+
+        // MODO 3: AUTOMÁTICO (Smart Router escolhe entre modelos reais e selecionados)
+        val candidateModels = mutableListOf<AIModelInfo>()
+        for (provider in activeProviders) {
+            val models = resolveModelsForProvider(provider, targetLevel)
+            if (models.isNotEmpty()) {
+                candidateModels.addAll(models)
+            } else {
+                val selected = selectedModels[provider.id]?.trim()
+                if (!selected.isNullOrBlank()) {
+                    candidateModels.add(buildModelInfoForSelection(provider.id, selected, targetLevel, task))
+                }
+            }
+        }
+
+        val allowedModels = candidateModels.filter { model ->
+            val estCost = FinancialManager.estimateCostUsd(model, promptLength)
+            FinancialManager.isModelAllowed(model, financialPolicy, currentSpend, monthlyBudget, estCost)
+        }
+
+        val bestModel = allowedModels.find { it.capabilities.contains(task.requiredCapability) && it.defaultLevel == targetLevel }
+            ?: allowedModels.find { it.capabilities.contains(task.requiredCapability) }
+            ?: allowedModels.firstOrNull()
+
+        if (bestModel != null) {
+            val provider = activeProviders.find { it.id == bestModel.providerId } ?: activeProviders.first()
+            val estCost = FinancialManager.estimateCostUsd(bestModel, promptLength)
+            return SmartRoutingDecision(
+                providerId = provider.id,
+                modelId = bestModel.id,
+                agentName = task.title,
+                reason = "Smart Router: selecionado para ${task.title} (${targetLevel.name}) conforme política financeira.",
+                isAutomatic = true,
+                wasFallback = false,
+                estimatedCostUsd = estCost,
+                isFree = bestModel.isFree,
+                isSuccess = true,
+                providerDisplayName = provider.displayName
+            )
+        }
+
+        // Fallback apenas para modelos selecionados pelo usuário em provedores ativos que atendam a política financeira
+        for (provider in activeProviders) {
+            val userSelectedModel = selectedModels[provider.id]?.trim()
+            if (!userSelectedModel.isNullOrBlank()) {
+                val info = buildModelInfoForSelection(provider.id, userSelectedModel, targetLevel, task)
+                val estCost = FinancialManager.estimateCostUsd(info, promptLength)
+                if (FinancialManager.isModelAllowed(info, financialPolicy, currentSpend, monthlyBudget, estCost)) {
                     return SmartRoutingDecision(
-                        providerId = preferred.id,
-                        modelId = modelId,
+                        providerId = provider.id,
+                        modelId = userSelectedModel,
                         agentName = task.title,
-                        reason = "Provedor preferencial do usuário selecionado.",
+                        reason = "Modelo selecionado pelo usuário para ${provider.displayName}.",
                         isAutomatic = true,
-                        wasFallback = false,
-                        estimatedCostUsd = FinancialManager.estimateCostUsd(modelInfo, promptLength),
-                        isFree = modelInfo.isFree
+                        wasFallback = true,
+                        estimatedCostUsd = estCost,
+                        isFree = info.isFree,
+                        isSuccess = true,
+                        providerDisplayName = provider.displayName
                     )
                 }
             }
         }
 
-        // MODO 3: AUTOMÁTICO (Smart Router escolhe o melhor modelo elegível)
-        val candidateModels = mutableListOf<AIModelInfo>()
-        for (provider in activeProviders) {
-            val models = getKnownModels(provider.id).ifEmpty {
-                try {
-                    provider.getAvailableModels(targetLevel)
-                } catch (_: Exception) {
-                    emptyList()
-                }
-            }
-            candidateModels.addAll(models)
+        val reasonMsg = if (candidateModels.isNotEmpty()) {
+            "Nenhum modelo elegível sob a política financeira '${financialPolicy.displayName}'. Ajuste a política ou teste um provedor com modelos gratuitos."
+        } else {
+            "Catálogo de modelos vazio nos provedores ativos. Acesse Configurações > Provedores de IA e toque em 'Testar Conexão' para carregar os modelos reais."
         }
-
-        // Filtrar modelos autorizados pela política financeira
-        val allowedModels = candidateModels.filter { model ->
-            FinancialManager.isModelAllowed(model, financialPolicy, currentSpend, monthlyBudget)
-        }
-
-        // Se nenhum modelo atende ao filtro estrito de orçamento, buscar modelos conhecidos gratuitos
-        val eligibleModels = if (allowedModels.isNotEmpty()) allowedModels else {
-            candidateModels.filter { it.isFree || it.id.endsWith(":free") }
-        }
-
-        // Encontrar o modelo mais aderente à capacidade necessária
-        val bestModel = eligibleModels.find { it.capabilities.contains(task.requiredCapability) && it.defaultLevel == targetLevel }
-            ?: eligibleModels.find { it.capabilities.contains(task.requiredCapability) }
-            ?: eligibleModels.firstOrNull()
-
-        if (bestModel != null) {
-            val provider = activeProviders.find { it.id == bestModel.providerId } ?: activeProviders.firstOrNull()
-            val finalProviderId = provider?.id ?: bestModel.providerId
-            return SmartRoutingDecision(
-                providerId = finalProviderId,
-                modelId = bestModel.id,
-                agentName = task.title,
-                reason = "Smart Router: selecionado para ${task.title} com nível ${targetLevel.name} e conformidade financeira.",
-                isAutomatic = true,
-                wasFallback = false,
-                estimatedCostUsd = FinancialManager.estimateCostUsd(bestModel, promptLength),
-                isFree = bestModel.isFree || bestModel.id.endsWith(":free")
-            )
-        }
-
-        // Fallback seguro caso não haja lista remota carregada
-        val fallbackProvider = activeProviders.firstOrNull()
-        val fallbackModel = if (fallbackProvider != null) {
-            selectedModels[fallbackProvider.id]?.ifBlank { getDefaultModelForProvider(fallbackProvider.id) }
-                ?: getDefaultModelForProvider(fallbackProvider.id)
-        } else "meta-llama/llama-3.3-70b-instruct:free"
-
         return SmartRoutingDecision(
-            providerId = fallbackProvider?.id ?: "openrouter",
-            modelId = fallbackModel,
+            providerId = "",
+            modelId = "",
             agentName = task.title,
-            reason = "Fallback seguro para provedor ativo com menor custo.",
+            reason = "Nenhum modelo elegível encontrado.",
             isAutomatic = true,
-            wasFallback = true,
-            estimatedCostUsd = 0.0,
-            isFree = fallbackModel.endsWith(":free")
+            wasFallback = false,
+            isSuccess = false,
+            failureReason = reasonMsg
         )
-    }
-
-    private fun getDefaultModelForProvider(providerId: String): String {
-        val known = getKnownModels(providerId).firstOrNull()?.id
-        if (!known.isNullOrBlank()) return known
-
-        return when (providerId) {
-            "gemini" -> "gemini-2.0-flash"
-            "openai" -> "gpt-4o"
-            "claude" -> "claude-3-5-sonnet-20241022"
-            "openrouter" -> "meta-llama/llama-3.3-70b-instruct:free"
-            else -> "default"
-        }
     }
 }

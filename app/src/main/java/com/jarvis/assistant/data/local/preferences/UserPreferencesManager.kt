@@ -286,7 +286,7 @@ class UserPreferencesManager(private val context: Context) {
             "Baixa latência para perguntas diretas e comandos instantâneos."
         )
         map[ModelTask.CODING.id] = TaskAssignment(
-            ModelTask.CODING, "claude", "claude-3-5-sonnet-20241022", AILevel.HIGH,
+            ModelTask.CODING, "claude", "claude-sonnet-4-20250514", AILevel.HIGH,
             "Agente de Programação: alta precisão técnica e depuração robusta."
         )
         map[ModelTask.COMPLEX_REASONING.id] = TaskAssignment(
@@ -298,7 +298,7 @@ class UserPreferencesManager(private val context: Context) {
             "Agente de Pesquisa: síntese ampla e investigação comparativa."
         )
         map[ModelTask.CREATIVE_WRITING.id] = TaskAssignment(
-            ModelTask.CREATIVE_WRITING, "claude", "claude-3-5-sonnet-20241022", AILevel.MEDIUM,
+            ModelTask.CREATIVE_WRITING, "claude", "claude-sonnet-4-20250514", AILevel.MEDIUM,
             "Agente Criativo: estilo narrativo refinado e ideação expressiva."
         )
         map[ModelTask.IMAGE_ANALYSIS.id] = TaskAssignment(

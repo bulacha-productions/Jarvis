@@ -2,13 +2,17 @@ package com.jarvis.assistant.router
 
 import com.jarvis.assistant.agent.MultiAgentOrchestrator
 import com.jarvis.assistant.ai.AIProvider
+import com.jarvis.assistant.data.local.preferences.SecureKeyStoreManager
 import com.jarvis.assistant.domain.model.*
+import com.jarvis.assistant.repositories.ModelCatalogRepository
 import kotlinx.coroutines.flow.Flow
 
 class JarvisRouter(
-    val providers: List<AIProvider>
+    val providers: List<AIProvider>,
+    catalogRepository: ModelCatalogRepository? = null,
+    keyStore: SecureKeyStoreManager? = null
 ) {
-    val smartRouter = JarvisSmartRouter(providers)
+    val smartRouter = JarvisSmartRouter(providers, catalogRepository, keyStore)
     val orchestrator = MultiAgentOrchestrator(providers, smartRouter)
 
     fun routeAndExecute(

@@ -210,6 +210,13 @@ class ChatViewModel(
                 repository.pruneMessagesFromTimestamp(targetConvId, editingTimestamp)
             }
 
+            // Captura histórico antes da inserção da mensagem atual para evitar duplicação na chamada da API
+            val historyBeforeCurrent = if (editingTimestamp != null) {
+                _uiState.value.messages.filter { it.timestamp < editingTimestamp }
+            } else {
+                _uiState.value.messages
+            }
+
             // Criação tardia: saveUserMessage cria a conversa no Room se targetConvId for nulo!
             val (convId, _) = repository.saveUserMessage(targetConvId, displayContent, attachment)
             if (_uiState.value.currentConversationId != convId) {
@@ -231,7 +238,7 @@ class ChatViewModel(
             val openAiKey = secureKeyStore?.getApiKey("openai")
             val isAutoSpeak = preferencesManager.isTtsAutoSpeak.firstOrNull() ?: false
 
-            val history = _uiState.value.messages
+            val history = historyBeforeCurrent
             val responseBuilder = StringBuilder()
 
             try {

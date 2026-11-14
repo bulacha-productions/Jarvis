@@ -56,7 +56,10 @@ data class SmartRoutingDecision(
     val isAutomatic: Boolean = true,
     val wasFallback: Boolean = false,
     val estimatedCostUsd: Double = 0.0,
-    val isFree: Boolean = true
+    val isFree: Boolean = true,
+    val isSuccess: Boolean = providerId.isNotBlank() && modelId.isNotBlank(),
+    val providerDisplayName: String = providerId,
+    val failureReason: String? = null
 )
 
 enum class ModelTask(

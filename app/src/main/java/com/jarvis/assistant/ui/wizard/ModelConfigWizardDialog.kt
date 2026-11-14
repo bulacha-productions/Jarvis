@@ -168,17 +168,29 @@ private fun computeDistribution(
     userPrefs: Map<ModelTask, AILevel>,
     outAssignments: MutableMap<String, TaskAssignment>
 ) {
+    val active = providers.filter { it.isEnabled && it.isKeySaved }
+    val pool = if (active.isNotEmpty()) active else providers.filter { it.isEnabled }.ifEmpty { providers }
+
     ModelTask.values().forEach { task ->
         val level = userPrefs[task] ?: task.defaultLevel
-        val (providerId, modelName, reason) = when (task) {
-            ModelTask.GENERAL_CHAT -> Triple("gemini", "gemini-2.0-flash", "Equilíbrio ideal entre velocidade, naturalidade de diálogo e fluência.")
-            ModelTask.QUICK_QUESTIONS -> Triple("gemini", "gemini-2.0-flash", "Baixíssima latência para consultas e comandos rápidos.")
-            ModelTask.CODING -> Triple("claude", "claude-3-5-sonnet-20241022", "Líder em precisão sintática, refatoração e depuração de código.")
-            ModelTask.COMPLEX_REASONING -> Triple("openai", "o3-mini", "Encadeamento dedutivo, resolução lógica e matemática avançada.")
-            ModelTask.RESEARCH -> Triple("gemini", "gemini-2.0-flash", "Janela ultra-longa de contexto para síntese de documentos densos.")
-            ModelTask.CREATIVE_WRITING -> Triple("claude", "claude-3-5-sonnet-20241022", "Prosa expressiva e vocabulário narrativo apurado.")
-            ModelTask.IMAGE_ANALYSIS -> Triple("gemini", "gemini-2.0-flash", "Visão computacional multimodal de alta sensibilidade e OCR.")
-            ModelTask.DOCUMENT_ANALYSIS -> Triple("gemini", "gemini-2.0-flash", "Compreensão aprofundada de arquivos densos, tabelas e PDFs.")
+        val candidateModel = pool.flatMap { p ->
+            p.availableModels.filter { it.isEnabled && it.capabilities.contains(task.requiredCapability) }
+        }.firstOrNull { it.defaultLevel == level }
+            ?: pool.flatMap { p -> p.availableModels.filter { it.isEnabled && it.capabilities.contains(task.requiredCapability) } }.firstOrNull()
+            ?: pool.flatMap { p -> p.availableModels.filter { it.isEnabled } }.firstOrNull()
+
+        val chosenProvider = candidateModel?.let { m -> pool.find { it.id == m.providerId } }
+            ?: pool.firstOrNull { it.selectedModel.isNotBlank() }
+            ?: pool.firstOrNull()
+
+        val providerId = chosenProvider?.id ?: "gemini"
+        val modelName = candidateModel?.id
+            ?: chosenProvider?.selectedModel?.ifBlank { null }
+            ?: ""
+        val reason = if (modelName.isNotBlank()) {
+            "Atribuído a partir do catálogo real/selecionado de ${chosenProvider?.displayName ?: providerId}."
+        } else {
+            "Aguardando descoberta de modelos em Configurações > Provedores de IA."
         }
         outAssignments[task.id] = TaskAssignment(task, providerId, modelName, level, reason)
     }
@@ -225,12 +237,12 @@ private fun IdentificationStageView(
                         Column {
                             Text(text = p.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                text = if (p.apiKey.isNotBlank()) "Chave configurada (${p.availableModels.size} modelos)" else "Chave não configurada",
+                                text = if (p.isKeySaved) "Chave configurada (${p.availableModels.size} modelos)" else "Chave não configurada",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (p.apiKey.isNotBlank()) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (p.isKeySaved) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (p.apiKey.isNotBlank()) {
+                        if (p.isKeySaved) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
                         }
                     }

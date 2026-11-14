@@ -6,13 +6,13 @@ import com.jarvis.assistant.domain.model.Attachment
 import com.jarvis.assistant.domain.model.Message
 import kotlinx.coroutines.flow.Flow
 
-enum class ProviderType(val displayName: String) {
-    GEMINI("Google Gemini"),
-    OPENAI("OpenAI"),
-    CLAUDE("Anthropic Claude"),
-    OPENROUTER("OpenRouter"),
-    CUSTOM("Provedor Personalizado (OpenAI Compatível)"),
-    MOCK("Jarvis Core (Offline)")
+enum class ProviderType {
+    GEMINI,
+    OPENAI,
+    CLAUDE,
+    OPENROUTER,
+    MOCK,
+    CUSTOM
 }
 
 /**
@@ -64,14 +64,17 @@ data class AIProviderConfig(
     val id: String,
     val type: ProviderType,
     val displayName: String,
-    val apiKey: String,
+    val apiKey: String = "",
     val isEnabled: Boolean = true,
     val baseUrl: String = "",
     val availableModels: List<AIModelInfo> = emptyList(),
     val selectedModel: String = "",
     val status: ProviderStatus = if (apiKey.isNotBlank()) ProviderStatus.CREDENCIAL_SALVA else ProviderStatus.SEM_CREDENCIAL,
     val lastError: String? = null,
-    val isKeySaved: Boolean = apiKey.isNotBlank(),
+    val maskedKey: String = "",
+    val keyFingerprint: String? = null,
+    val isKeySaved: Boolean = apiKey.isNotBlank() || maskedKey.isNotBlank(),
+    val isDecryptionFailed: Boolean = (status == ProviderStatus.FALHA_DESCRIPTOGRAFIA),
     val isConnectionValidated: Boolean = (status == ProviderStatus.CONEXAO_VALIDADA || status == ProviderStatus.CONNECTED),
     val isCatalogLoaded: Boolean = availableModels.isNotEmpty()
 )

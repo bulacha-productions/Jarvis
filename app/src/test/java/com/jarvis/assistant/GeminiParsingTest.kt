@@ -1,8 +1,7 @@
 package com.jarvis.assistant
 
 import com.jarvis.assistant.ai.GeminiProvider
-import com.jarvis.assistant.domain.model.AILevel
-import org.json.JSONObject
+import com.jarvis.assistant.domain.model.Message
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -11,7 +10,7 @@ import org.junit.Test
 class GeminiParsingTest {
 
     @Test
-    fun testParseModelsFromJson_filtersNonGenerateContentAndStripsPrefix() {
+    fun testParseModelsFromJson_filtersNonChatModelsStripsPrefixDeduplicatesAndPrioritizes31() {
         val mockApiResponse = """
         {
           "models": [
@@ -21,8 +20,18 @@ class GeminiParsingTest {
               "supportedGenerationMethods": ["generateContent", "countTokens"]
             },
             {
-              "name": "models/gemini-2.0-flash-thinking-exp",
-              "displayName": "Gemini 2.0 Flash Thinking",
+              "name": "models/gemini-3.1-flash-lite",
+              "displayName": "Gemini 3.1 Flash Lite",
+              "supportedGenerationMethods": ["generateContent"]
+            },
+            {
+              "name": "models/gemini-3.1-flash-lite",
+              "displayName": "Gemini 3.1 Flash Lite Duplicate",
+              "supportedGenerationMethods": ["generateContent"]
+            },
+            {
+              "name": "models/imagen-3.0-generate-002",
+              "displayName": "Imagen 3",
               "supportedGenerationMethods": ["generateContent"]
             },
             {
@@ -39,48 +48,33 @@ class GeminiParsingTest {
         }
         """.trimIndent()
 
-        // Reflection or direct invocation of parseModelsFromJson logic
-        val root = JSONObject(mockApiResponse)
-        val modelsArray = root.getJSONArray("models")
-        val parsedModels = mutableListOf<String>()
+        val parsed = GeminiProvider.parseModelsFromJson(mockApiResponse)
+        val ids = parsed.map { it.id }
 
-        for (i in 0 until modelsArray.length()) {
-            val obj = modelsArray.getJSONObject(i)
-            val rawName = obj.optString("name")
-            val supportedMethods = obj.optJSONArray("supportedGenerationMethods")
-
-            var supportsGenerate = false
-            if (supportedMethods != null) {
-                for (j in 0 until supportedMethods.length()) {
-                    if (supportedMethods.getString(j) == "generateContent") {
-                        supportsGenerate = true
-                        break
-                    }
-                }
-            }
-
-            if (supportsGenerate) {
-                val cleanId = rawName.removePrefix("models/")
-                parsedModels.add(cleanId)
-            }
-        }
-
-        // Must include generateContent models
-        assertTrue(parsedModels.contains("gemini-2.0-flash"))
-        assertTrue(parsedModels.contains("gemini-2.0-flash-thinking-exp"))
-
-        // Must NOT include embedding or aqa models
-        assertFalse(parsedModels.contains("text-embedding-004"))
-        assertFalse(parsedModels.contains("aqa"))
-
-        // Prefix "models/" must be stripped
-        assertTrue(parsedModels.all { !it.startsWith("models/") })
+        assertTrue(ids.contains("gemini-3.1-flash-lite"))
+        assertTrue(ids.contains("gemini-2.0-flash"))
+        assertFalse(ids.contains("text-embedding-004"))
+        assertFalse(ids.contains("aqa"))
+        assertFalse(ids.contains("imagen-3.0-generate-002"))
+        assertEquals(2, ids.size) // Deduplicated!
+        assertEquals("gemini-3.1-flash-lite", ids.first()) // 3.1 prioritized first
+        assertTrue(ids.all { !it.startsWith("models/") })
     }
 
     @Test
-    fun testNoLegacy15ModelsHardcoded() {
-        // Assert that default models are 2.0/2.5 or contemporary
-        val defaultModel = "gemini-2.0-flash"
-        assertFalse(defaultModel.contains("1.5"))
+    fun testBuildNormalizedContents_skipsLeadingModelDeduplicatesTrailingPromptAndAlternates() {
+        val history = listOf(
+            Message(id = "1", conversationId = "c1", content = "Boas-vindas!", isFromUser = false, timestamp = 1L),
+            Message(id = "2", conversationId = "c1", content = "Olá", isFromUser = true, timestamp = 2L),
+            Message(id = "3", conversationId = "c1", content = "Como posso ajudar?", isFromUser = false, timestamp = 3L),
+            Message(id = "4", conversationId = "c1", content = "Explique Kotlin", isFromUser = true, timestamp = 4L)
+        )
+
+        val contents = GeminiProvider.buildNormalizedContentsForMessages(history, "Explique Kotlin")
+        assertEquals(3, contents.length())
+        assertEquals("user", contents.getJSONObject(0).getString("role"))
+        assertEquals("model", contents.getJSONObject(1).getString("role"))
+        assertEquals("user", contents.getJSONObject(2).getString("role"))
+        assertEquals("Explique Kotlin", contents.getJSONObject(2).getJSONArray("parts").getJSONObject(0).getString("text"))
     }
 }

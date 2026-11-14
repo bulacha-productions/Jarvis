@@ -8,15 +8,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
-/**
- * Gerenciador nativo de Text-to-Speech (TTS) em português brasileiro.
- * V3.1.1: Callbacks 100% orientados a eventos via UtteranceProgressListener,
- * eliminando esperas fixas e garantindo anti-autodisparo no microfone.
- */
 class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
@@ -25,7 +21,8 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
     init {
         try {
             tts = TextToSpeech(context.applicationContext, this)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     override fun onInit(status: Int) {
@@ -57,9 +54,6 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    /**
-     * Fala o texto e invoca [onDone] exatamente quando o sintetizador finalizar a reprodução.
-     */
     fun speak(
         text: String,
         utteranceId: String = "jarvis_msg_${System.currentTimeMillis()}",
@@ -73,8 +67,10 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
         currentOnDoneCallback = onDone
 
         val cleanText = text
+            .replace(Regex("(?m)^> 🔀.*\\n*"), "")
             .replace(Regex("[#*`_\\[\\]()]"), " ")
             .replace(Regex("https?://\\S+"), "link")
+            .trim()
             .take(1200)
 
         tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
@@ -84,7 +80,8 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
     fun stop() {
         try {
             tts?.stop()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         _isSpeaking.value = false
         currentOnDoneCallback = null
     }
@@ -93,7 +90,8 @@ class TTSManager(private val context: Context) : TextToSpeech.OnInitListener {
         try {
             tts?.stop()
             tts?.shutdown()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         tts = null
         isInitialized = false
         _isSpeaking.value = false

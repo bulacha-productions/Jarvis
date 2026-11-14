@@ -273,7 +273,7 @@ class VoiceDiagnosticsManager(private val context: Context) {
     private fun testProvidersAndCatalog() {
         updateItem(10, DiagnosticStatus.RUNNING)
         try {
-            val keyStore = SecureKeyStoreManager(context)
+            val keyStore = SecureKeyStoreManager.getInstance(context)
             val providers = listOf("gemini", "openai", "claude", "openrouter")
             val results = providers.map { p -> p to keyStore.verifyCredential(p) }
             val stored = results.filter { it.second.isStored }
